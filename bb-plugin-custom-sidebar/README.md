@@ -4,6 +4,9 @@ A compact replacement for BB's native thread list. It groups source threads into
 Needs you, In review, and Working; nests hidden side chats under their source;
 shows pull requests, CI, and worktree diffs; and supports dialog-based rename,
 safe archive, drag-to-split, numbered shortcuts, and arrow-key navigation.
+Leading `[bb]` and `[bogi]` title tags render as their matching brand marks.
+The usage footer tracks local-time samples and highlights the portion of the
+weekly Codex allowance consumed since the user's midnight when history exists.
 
 Native BB chats gain stable thread accents and side-chat panels,
 one-click side-chat handoffs, auto-merge controls, and Luna-generated summaries
@@ -22,7 +25,7 @@ Keyboard commands:
 - Command-Shift-T toggles an existing TLDR or generates one when none exists.
 - Command-Shift-M merges an eligible pull request.
 - Command-Shift-A archives or unarchives the current thread.
-- Escape and arrow keys return to and navigate the thread list; typing returns to the chat composer.
+- Escape closes an open TLDR before returning to the thread list; arrow keys navigate the list, and typing returns to the chat composer.
 
 Archiving a managed-worktree source archives its environment's threads so BB can
 clean up the worktree, and is refused while the source or a child chat is running.
