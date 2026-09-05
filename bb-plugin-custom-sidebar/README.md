@@ -13,6 +13,7 @@ one-click side-chat handoffs, auto-merge controls, and Luna-generated summaries
 for unread replies of at least 400 characters. Handoffs ask the side chat for a
 terse fenced summary and relay only that summary to its source thread. Summaries
 keep the native composer usable and offer up to three terse follow-up actions.
+Native steer labels and action buttons below user messages are hidden.
 When a new pull request appears, its review side chat starts automatically in the
 background.
 

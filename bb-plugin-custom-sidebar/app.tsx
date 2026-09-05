@@ -1704,6 +1704,16 @@ export default definePluginApp((app) => {
         [data-testid="app-sidebar-navigation-divider"] {
           display: none !important;
         }
+
+        [data-message-column]
+          > [class~="group/message"][class~="ml-auto"]
+          > [class~="mb-1"][class~="justify-end"]:has(> span[class~="whitespace-nowrap"]),
+        [data-message-column]
+          > [class~="group/message"][class~="ml-auto"]
+          > [class~="w-fit"][class~="flex-col"]
+          > :is([class~="h-5"], [class~="h-7"]):has(button[aria-label]) {
+          display: none !important;
+        }
       `;
       document.head.append(style);
       signal.addEventListener("abort", () => {
