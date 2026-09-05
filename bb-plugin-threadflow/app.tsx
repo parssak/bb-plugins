@@ -1585,6 +1585,23 @@ function JournalSidebarNavigation({
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
   }, []);
+  useEffect(() => {
+    if (journalItem === undefined) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        !event.metaKey
+        || !event.shiftKey
+        || event.ctrlKey
+        || event.altKey
+        || event.key.toLocaleLowerCase() !== "j"
+      ) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) activate(journalItem.id, { openInSplit: false });
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [activate, journalItem]);
 
   if (journalItem === undefined || headerTarget === null) return null;
   const isActive = activeItemId === journalItem.id;
@@ -1599,7 +1616,7 @@ function JournalSidebarNavigation({
       type="button"
       {...journalItem.experimental_splitProps}
       aria-label={label}
-      title={label}
+      title={`${label} (⌘⇧J)`}
       aria-current={isActive ? "page" : undefined}
       onClick={() => activate(journalItem.id, { openInSplit: false })}
       className={highlight
