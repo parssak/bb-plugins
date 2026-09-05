@@ -74,6 +74,35 @@ const BB_LOGO_DATA_URL = "data:image/webp;base64,"
   + "Yn4QRpC0CMuqIN9C0cdertgf1maTtzbOaoB+E0soGK6WqJDxGE8tcSEsmcN5d3cPQDAT3znH3MYDijWZRTvKblBYsoI4VYgnDV2S"
   + "iGcQXOfsbssYA84ww72MAWTvIESD+WvifT93Dynk8/R5LPqeRzMPmcTT3H0/5PWLgU";
 const VIEWER_CLIENT_ID = `native-chat-${Math.random().toString(36).slice(2)}`;
+const MESSAGE_BUBBLE_TAIL_PATH = "M8.33594 0.5C8.7668 0.821894 9.07248 1.04615 9.30176 1.21094C9.55938 1.3961 9.70552 1.49813 9.8252 1.58789C9.97196 1.69798 10.063 1.78007 10.2666 1.97949C9.91758 2.45087 9.86145 3.11747 9.9082 3.72559C9.97604 4.60748 10.2761 5.65946 10.6572 6.67578C11.041 7.69919 11.519 8.71995 11.9658 9.5498C12.3707 10.3016 12.7783 10.9463 13.0811 11.2812C13.1997 11.5187 13.2999 11.7209 13.3594 11.9004C13.3992 12.0208 13.4042 12.0854 13.4043 12.1133C13.3726 12.1293 13.2986 12.1562 13.1455 12.1699C12.8453 12.1969 12.3568 12.1616 11.5977 12.0098C9.22996 11.5361 7.06273 9.98557 5.25586 8.49023C4.3835 7.76828 3.54044 7.01048 2.88281 6.48438C2.54469 6.21388 2.22287 5.97683 1.92773 5.80566C1.64508 5.64174 1.32344 5.5 1 5.5H0.5V0.5H8.33594Z";
+const MESSAGE_BUBBLE_TAIL_MASK = `url("data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 13"><path d="${MESSAGE_BUBBLE_TAIL_PATH}" fill="black" stroke="black"/></svg>`)}")`;
+const NATIVE_USER_MESSAGE_SELECTOR = `[data-message-column] > [class~="group/message"][class~="ml-auto"]`;
+const NATIVE_USER_BUBBLE_SELECTOR = `${NATIVE_USER_MESSAGE_SELECTOR} > [class~="w-fit"][class~="flex-col"] > [class~="bg-surface-recessed"]`;
+const NATIVE_CHAT_CSS = `
+  ${NATIVE_USER_BUBBLE_SELECTOR} {
+    position: relative !important;
+    border: 0 !important;
+    border-radius: 1rem !important;
+    padding: 0.125rem 0.75rem !important;
+  }
+
+  [data-timeline-row-id]:has(${NATIVE_USER_MESSAGE_SELECTOR}):not(
+    :has(+ [data-timeline-row-id]:has(${NATIVE_USER_MESSAGE_SELECTOR}))
+  )
+    ${NATIVE_USER_BUBBLE_SELECTOR}::after {
+    content: "";
+    position: absolute;
+    right: 4px;
+    bottom: -7px;
+    z-index: 10;
+    width: 14px;
+    height: 13px;
+    pointer-events: none;
+    background-color: var(--surface-recessed);
+    -webkit-mask: ${MESSAGE_BUBBLE_TAIL_MASK} center / 14px 13px no-repeat;
+    mask: ${MESSAGE_BUBBLE_TAIL_MASK} center / 14px 13px no-repeat;
+  }
+`;
 const NATIVE_COMPOSER_CSS = `
   [data-thread-window]:has([data-threadflow-summary-open="true"]) [data-timeline-row-list="top-level"] {
     opacity: 0 !important;
@@ -1714,6 +1743,8 @@ export default definePluginApp((app) => {
           > :is([class~="h-5"], [class~="h-7"]):has(button[aria-label]) {
           display: none !important;
         }
+
+        ${NATIVE_CHAT_CSS}
       `;
       document.head.append(style);
       signal.addEventListener("abort", () => {
