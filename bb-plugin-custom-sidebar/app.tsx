@@ -1542,8 +1542,21 @@ export default definePluginApp((app) => {
           [aria-label="settings" i],
           [aria-label^="settings (" i],
           [data-testid="plugin-sidebar-footer-item-connect-remote"],
+          [data-testid="plugin-sidebar-footer-action-connect-remote-access"],
+          [aria-label="remote access" i],
           [aria-label="report a bug" i]
         ) { display: none !important; }
+
+        [data-testid="app-desktop-sidebar-trigger"],
+        [data-testid="app-sidebar-trigger-overlay"],
+        [data-sidebar="sidebar"] :is(button, [role="button"]):is(
+          [aria-label="go back" i],
+          [aria-label="go forward" i]
+        ) { display: none !important; }
+
+        [data-testid="app-sidebar-navigation-divider"] {
+          display: none !important;
+        }
       `;
       document.head.append(style);
       signal.addEventListener("abort", () => {
