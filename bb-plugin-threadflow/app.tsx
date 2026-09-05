@@ -980,16 +980,18 @@ function NativeChatSummary({ threadId }: { threadId: string }) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (showExisting = false) => {
     try {
       const result = await rpc.call("chat_summary", { threadId });
-      setSummary(result.summary);
+      setSummary(result.summary === null || !showExisting
+        ? result.summary
+        : { ...result.summary, dismissed: false });
     } catch {
       setSummary(null);
     }
   }, [rpc, threadId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(true); }, [load]);
   useRealtime(SUMMARIES_CHANGED_CHANNEL, (event) => {
     if (typeof event === "object" && event !== null && (event as { threadId?: unknown }).threadId === threadId) void load();
   });
