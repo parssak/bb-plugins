@@ -13,11 +13,15 @@ import {
   isThreadNudgerMessageText,
   isThreadNudgerUserMessage,
 } from "./thread-nudger-message.ts";
+import { isJournalDateKey } from "./journal-date.ts";
 import { collectUserMessageTimestamps } from "./user-message-timestamp.ts";
 import { registerThreadflowWaits } from "./wait-service.ts";
 
 const scopeSchema = z.enum(["recent", "all"]);
 const USER_MESSAGE_TIMESTAMP_PAGE_LIMIT = 25;
+const JOURNAL_KEY_PREFIX = "journal:";
+const MAX_JOURNAL_CONTENT_LENGTH = 100_000;
+const journalDateKeySchema = z.string().refine(isJournalDateKey, "Invalid local date");
 const sideChatSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -112,6 +116,17 @@ export const rpcContract = defineRpcContract({
         createdAt: z.number(),
       }).strict()),
     }).strict(),
+  },
+  journal_entry: {
+    input: z.object({ dateKey: journalDateKeySchema }).strict(),
+    output: z.object({ content: z.string().max(MAX_JOURNAL_CONTENT_LENGTH).nullable() }).strict(),
+  },
+  save_journal_entry: {
+    input: z.object({
+      dateKey: journalDateKeySchema,
+      content: z.string().max(MAX_JOURNAL_CONTENT_LENGTH),
+    }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
   },
   create_side_chat: {
     input: z.object({
@@ -1033,6 +1048,18 @@ export default function plugin(bb: BbPluginApi) {
         if (!timeline.timelinePage.hasOlderRows || olderCursor === null) break;
       }
       return { messages: collectUserMessageTimestamps(rows) };
+    },
+    journal_entry: async ({ dateKey }) => {
+      const stored = await bb.storage.kv.get<unknown>(`${JOURNAL_KEY_PREFIX}${dateKey}`);
+      return {
+        content: typeof stored === "string" && stored.length <= MAX_JOURNAL_CONTENT_LENGTH ? stored : null,
+      };
+    },
+    save_journal_entry: async ({ dateKey, content }) => {
+      const key = `${JOURNAL_KEY_PREFIX}${dateKey}`;
+      if (content.trim() === "") await bb.storage.kv.delete(key);
+      else await bb.storage.kv.set(key, content);
+      return { ok: true as const };
     },
     create_side_chat: createSideChat,
     create_automatic_review: async ({ sourceThreadId }) => {

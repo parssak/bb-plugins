@@ -1,4 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  ArrowLeft01Icon,
+  ArrowRight01Icon,
+  File01Icon,
+} from "@hugeicons/core-free-icons";
 import {
   Markdown,
   ThreadChat,
@@ -15,7 +22,14 @@ import {
   useRealtime,
   useRpc,
 } from "@get-bb/plugin-sdk/app";
-import type { PluginSidebarPullRequest, PluginThreadHeaderActionProps, PluginThreadListProps, PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
+import type {
+  ExperimentalSidebarNavigationProps,
+  PluginNavPanelProps,
+  PluginSidebarPullRequest,
+  PluginThreadHeaderActionProps,
+  PluginThreadListProps,
+  PluginThreadPanelProps,
+} from "@get-bb/plugin-sdk/app";
 import type { NativeSideChat, NativeThread, rpcContract } from "./server";
 import { ContextSwitchGuard } from "./context-switch-guard";
 import { toast } from "sonner";
@@ -38,6 +52,12 @@ import {
 import { parseThreadTitleBrand, type ThreadTitleBrand } from "./thread-title-brand";
 import { isThreadNudgerMessageText } from "./thread-nudger-message";
 import { formatUserMessageTimestamp, type UserMessageTimestamp } from "./user-message-timestamp";
+import {
+  formatJournalDate,
+  isJournalDateKey,
+  localJournalDateKey,
+  shiftJournalDateKey,
+} from "./journal-date";
 
 type ChatTarget = {
   id: string;
@@ -1128,10 +1148,7 @@ function groupSidebarThreads(
   const needsYou: NativeThread[] = [];
   const inReview: NativeThread[] = [];
   for (const thread of threads) {
-    const sideChatInProgress = thread.sideChats.some((sideChat) => sideChat.running && !sideChat.needsAttention);
-    const threadInProgress = !thread.archived
-      && (sideChatInProgress || !thread.needsAttention && thread.status !== "idle" && thread.status !== "error");
-    if (threadInProgress) {
+    if (threadIsWorking(thread)) {
       working.push(thread);
     } else if (pullRequests[thread.id]?.state === "open" || pullRequests[thread.id]?.state === "draft") {
       inReview.push(thread);
@@ -1384,8 +1401,262 @@ function SidebarThreadRow({
   );
 }
 
-function HiddenSidebarNavigation() {
-  return null;
+function threadIsWorking(thread: NativeThread): boolean {
+  const sideChatInProgress = thread.sideChats.some((sideChat) => sideChat.running && !sideChat.needsAttention);
+  return !thread.archived
+    && (sideChatInProgress || !thread.needsAttention && thread.status !== "idle" && thread.status !== "error");
+}
+
+function JournalSidebarNavigation({
+  items,
+  activeItemId,
+  experimental_activate: activate,
+}: ExperimentalSidebarNavigationProps) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [threads, setThreads] = useState<NativeThread[]>([]);
+  const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
+  const journalItem = items.find((item) => item.action.kind === "open-plugin-panel"
+    && item.action.pluginId === "threadflow"
+    && item.action.panelId === "journal");
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await rpc.call("threads", { scope: "recent", query: "" });
+      setThreads(result.threads);
+    } catch {
+      // The journal stays available; only its optional reminder color goes stale.
+    }
+  }, [rpc]);
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+  useRealtime(THREADS_CHANGED_CHANNEL, () => void refresh());
+  useEffect(() => {
+    const findTarget = () => {
+      const nextTarget = document.querySelector<HTMLElement>('[data-testid="app-sidebar-top-reserve-row"]');
+      setHeaderTarget((current) => current === nextTarget ? current : nextTarget);
+    };
+    findTarget();
+    const observer = new MutationObserver(findTarget);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  if (journalItem === undefined || headerTarget === null) return null;
+  const isActive = activeItemId === journalItem.id;
+  const allWorkIsRunning = threads.length > 0 && threads.every(threadIsWorking);
+  const highlight = isActive || allWorkIsRunning;
+  const label = allWorkIsRunning && !isActive
+    ? "Open Journal — everything is working"
+    : "Open Journal";
+
+  return createPortal(
+    <button
+      type="button"
+      {...journalItem.experimental_splitProps}
+      aria-label={label}
+      title={label}
+      aria-current={isActive ? "page" : undefined}
+      onClick={() => activate(journalItem.id, { openInSplit: false })}
+      className={highlight
+        ? "grid size-7 place-items-center rounded-md bg-blue-500/10 text-blue-500 outline-none hover:bg-blue-500/15 focus-visible:ring-1 focus-visible:ring-blue-500/50"
+        : "grid size-7 place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"}
+    >
+      <HugeiconsIcon icon={File01Icon} className="size-4" aria-hidden />
+    </button>,
+    headerTarget,
+  );
+}
+
+function useJournalToday(): string {
+  const [today, setToday] = useState(() => localJournalDateKey());
+  useEffect(() => {
+    const timer = window.setInterval(() => setToday(localJournalDateKey()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return today;
+}
+
+function journalDateFromSubPath(subPath: string, today: string): string {
+  return isJournalDateKey(subPath) ? subPath : today;
+}
+
+function JournalHeader({ subPath }: PluginNavPanelProps) {
+  const navigate = useBbNavigate();
+  const today = useJournalToday();
+  const dateKey = journalDateFromSubPath(subPath, today);
+  const heading = formatJournalDate(dateKey);
+  const goToDate = useCallback((nextDateKey: string) => {
+    navigate.toPluginPanel("journal", { subPath: nextDateKey === today ? "" : nextDateKey });
+  }, [navigate, today]);
+
+  return (
+    <div data-threadflow-journal-header className="flex min-w-0 flex-1 items-center gap-1">
+      <button
+        type="button"
+        aria-label="Previous journal day"
+        title="Previous day"
+        onClick={() => goToDate(shiftJournalDateKey(dateKey, -1))}
+        className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+      >
+        <HugeiconsIcon icon={ArrowLeft01Icon} className="size-4" aria-hidden />
+      </button>
+      <label className="relative min-w-0 cursor-pointer rounded px-1 outline-none focus-within:ring-1 focus-within:ring-muted-foreground/40">
+        <span className="block truncate text-sm font-semibold text-foreground">{heading}</span>
+        <input
+          type="date"
+          value={dateKey}
+          max={today}
+          aria-label="Choose journal date"
+          onChange={(event) => {
+            if (isJournalDateKey(event.target.value)) goToDate(event.target.value);
+          }}
+          className="absolute inset-0 size-full cursor-pointer opacity-0"
+        />
+      </label>
+      <button
+        type="button"
+        disabled={dateKey >= today}
+        aria-label="Next journal day"
+        title={dateKey >= today ? "This is today" : "Next day"}
+        onClick={() => goToDate(shiftJournalDateKey(dateKey, 1))}
+        className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40 disabled:pointer-events-none disabled:opacity-30"
+      >
+        <HugeiconsIcon icon={ArrowRight01Icon} className="size-4" aria-hidden />
+      </button>
+    </div>
+  );
+}
+
+type JournalSaveState = "dirty" | "error" | "saved" | "saving";
+
+function JournalDay({ dateKey }: { dateKey: string }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [content, setContent] = useState("");
+  const [ready, setReady] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<JournalSaveState>("saved");
+  const desiredContentRef = useRef("");
+  const savedContentRef = useRef("");
+  const readyRef = useRef(false);
+  const mountedRef = useRef(true);
+  const saveInFlightRef = useRef(false);
+  const saveAgainRef = useRef(false);
+  const loadSequenceRef = useRef(0);
+
+  const load = useCallback(async () => {
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
+    readyRef.current = false;
+    setReady(false);
+    setLoadError(null);
+    try {
+      const result = await rpc.call("journal_entry", { dateKey });
+      if (!mountedRef.current || loadSequenceRef.current !== sequence) return;
+      const nextContent = result.content ?? "";
+      desiredContentRef.current = nextContent;
+      savedContentRef.current = nextContent;
+      readyRef.current = true;
+      setContent(nextContent);
+      setSaveState("saved");
+      setReady(true);
+    } catch (cause) {
+      if (!mountedRef.current || loadSequenceRef.current !== sequence) return;
+      setLoadError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [dateKey, rpc]);
+
+  const flush = useCallback(async () => {
+    if (!readyRef.current) return;
+    if (saveInFlightRef.current) {
+      saveAgainRef.current = true;
+      return;
+    }
+    saveInFlightRef.current = true;
+    try {
+      do {
+        saveAgainRef.current = false;
+        const nextContent = desiredContentRef.current;
+        if (nextContent === savedContentRef.current) break;
+        if (mountedRef.current) setSaveState("saving");
+        await rpc.call("save_journal_entry", { dateKey, content: nextContent });
+        savedContentRef.current = nextContent;
+      } while (saveAgainRef.current);
+      if (mountedRef.current) {
+        setSaveState(desiredContentRef.current === savedContentRef.current ? "saved" : "dirty");
+      }
+    } catch {
+      if (mountedRef.current) setSaveState("error");
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  }, [dateKey, rpc]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    void load();
+    return () => {
+      mountedRef.current = false;
+      loadSequenceRef.current += 1;
+      void flush();
+    };
+  }, [flush, load]);
+  useEffect(() => {
+    if (!ready || content === savedContentRef.current) return;
+    setSaveState("dirty");
+    const timer = window.setTimeout(() => void flush(), 450);
+    return () => window.clearTimeout(timer);
+  }, [content, flush, ready]);
+
+  const heading = formatJournalDate(dateKey);
+  if (!ready) {
+    return (
+      <div className="flex h-full items-center justify-center p-6 text-sm text-muted-foreground">
+        {loadError === null ? (
+          <span>Loading…</span>
+        ) : (
+          <div className="space-y-3 text-center">
+            <p>Couldn’t load this journal entry.</p>
+            <Button type="button" size="sm" variant="outline" onClick={() => void load()}>Try again</Button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <main className="mx-auto flex h-full w-full max-w-3xl flex-col px-6 py-8 md:px-10 md:py-10">
+      <textarea
+        autoFocus
+        value={content}
+        maxLength={100_000}
+        spellCheck
+        aria-label={`Journal for ${heading}`}
+        placeholder="What are you trying to achieve today?"
+        onChange={(event) => {
+          desiredContentRef.current = event.target.value;
+          setContent(event.target.value);
+        }}
+        onBlur={() => void flush()}
+        className="min-h-0 flex-1 resize-none bg-transparent text-base leading-7 text-foreground outline-none placeholder:text-muted-foreground/35"
+      />
+      <span className={saveState === "error" ? "mt-2 shrink-0 text-right text-xs text-destructive" : "mt-2 shrink-0 text-right text-xs text-muted-foreground/60"}>
+        {saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved" : saveState === "error" ? "Couldn’t save" : "Saved"}
+      </span>
+    </main>
+  );
+}
+
+function JournalPage({ subPath }: PluginNavPanelProps) {
+  const today = useJournalToday();
+  const dateKey = journalDateFromSubPath(subPath, today);
+  return (
+    <div className="h-full min-h-0 overflow-hidden bg-background">
+      <JournalDay key={dateKey} dateKey={dateKey} />
+    </div>
+  );
 }
 
 type CodexUsage =
@@ -1965,6 +2236,21 @@ export default definePluginApp((app) => {
           display: none !important;
         }
 
+        [data-testid="app-page-header-content-row"]:has([data-threadflow-journal-header])
+          > :first-child {
+          display: none !important;
+        }
+
+        [data-testid="app-page-header-content-row"]:has([data-threadflow-journal-header])
+          > [data-app-page-header-actions],
+        [data-testid="app-page-header-content-row"]:has([data-threadflow-journal-header])
+          > [data-app-page-header-actions] > div,
+        [data-testid="app-page-header-content-row"]:has([data-threadflow-journal-header])
+          [data-bb-plugin-root] {
+          flex: 1 1 auto !important;
+          min-width: 0 !important;
+        }
+
         [data-message-column]
           > [class~="group/message"][class~="ml-auto"]
           > [class~="mb-1"][class~="justify-end"]:has(> span[class~="whitespace-nowrap"]),
@@ -2062,6 +2348,14 @@ export default definePluginApp((app) => {
     title: "Thread status",
     component: NativeThreadHeader,
   });
+  app.slots.navPanel({
+    id: "journal",
+    title: "Journal",
+    icon: "FileText",
+    path: "journal",
+    component: JournalPage,
+    headerContent: JournalHeader,
+  });
   app.slots.threadPanelAction({
     id: "side-chat",
     title: "Side chat",
@@ -2077,8 +2371,8 @@ export default definePluginApp((app) => {
   });
   app.slots.experimental_sidebarNavigation({
     id: "keyboard-only-navigation",
-    title: "Keyboard-only navigation",
-    description: "Hides sidebar navigation buttons while preserving BB shortcuts.",
-    component: HiddenSidebarNavigation,
+    title: "Threadflow navigation",
+    description: "A compact Journal button while preserving BB shortcuts.",
+    component: JournalSidebarNavigation,
   });
 });
