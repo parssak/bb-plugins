@@ -43,8 +43,6 @@ import {
 } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import {
-  appendUsageSample,
-  calculateTodayUsedPercent,
   parseUsageSamples,
   type TodayUsageEstimate,
   type UsageSample,
@@ -87,7 +85,8 @@ const SUMMARIES_CHANGED_CHANNEL = "chat-summaries-changed";
 const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 const REVIEW_WORKTREE_PROMPT = "Review the changes in this worktree";
 const ASK_LINUS_PROMPT = "how would linus torvalds feel about this";
-const USAGE_SAMPLES_STORAGE_KEY = "threadflow:codex-usage-samples:v1";
+const LEGACY_USAGE_SAMPLES_STORAGE_KEY = "threadflow:codex-usage-samples:v1";
+const MAX_LEGACY_USAGE_SAMPLES = 2_048;
 const WAITING_COLLAPSED_STORAGE_KEY = "threadflow:waiting-collapsed:v1";
 const BB_LOGO_DATA_URL = "data:image/webp;base64,"
   + "UklGRqwDAABXRUJQVlA4TKADAAAvL8ALEJUGQbbN66+9nCEiJmANn1izbSRJUf5Rt3OzR/9vHz1TBKMAYJQc7pJB+0CbNVkBnhTY"
@@ -1996,7 +1995,12 @@ function JournalPage({ subPath }: PluginNavPanelProps) {
 }
 
 type CodexUsage =
-  | { status: "ok"; planLabel: string | null; windows: Array<{ label: string; resetsAt: string | null; usedPercent: number }> }
+  | {
+    status: "ok";
+    planLabel: string | null;
+    windows: Array<{ label: string; resetsAt: string | null; usedPercent: number }>;
+    todayUsage: TodayUsageEstimate | null;
+  }
   | { status: "unavailable"; message: string };
 
 function formatUsageReset(resetsAt: string | null): string | null {
@@ -2024,14 +2028,38 @@ function formatTodayUsage(usedPercent: number): string {
 function SidebarFooter() {
   const rpc = useRpc<typeof rpcContract>();
   const [usage, setUsage] = useState<CodexUsage | null>(null);
-  const [todayUsage, setTodayUsage] = useState<TodayUsageEstimate | null>(null);
   const usageRefreshInFlight = useRef(false);
+  const legacyUsageSamples = useRef<UsageSample[] | null>(null);
 
   const refresh = useCallback(async () => {
     if (usageRefreshInFlight.current) return;
     usageRefreshInFlight.current = true;
     try {
-      setUsage(await rpc.call("codex_usage", {}));
+      if (legacyUsageSamples.current === null) {
+        try {
+          legacyUsageSamples.current = parseUsageSamples(
+            window.localStorage.getItem(LEGACY_USAGE_SAMPLES_STORAGE_KEY),
+          ).slice(-MAX_LEGACY_USAGE_SAMPLES);
+        } catch {
+          legacyUsageSamples.current = [];
+        }
+      }
+      const now = Date.now();
+      const result = await rpc.call("codex_usage", {
+        dayStartedAt: localDayStart(now),
+        ...(legacyUsageSamples.current.length === 0
+          ? {}
+          : { legacySamples: legacyUsageSamples.current }),
+      });
+      setUsage(result);
+      if (result.status === "ok") {
+        legacyUsageSamples.current = [];
+        try {
+          window.localStorage.removeItem(LEGACY_USAGE_SAMPLES_STORAGE_KEY);
+        } catch {
+          // The shared server history is authoritative even if legacy cleanup fails.
+        }
+      }
     } catch {
       setUsage({ status: "unavailable", message: "Codex usage unavailable" });
     } finally {
@@ -2066,36 +2094,10 @@ function SidebarFooter() {
     ? usage.windows.find((window) => /week|7\s*d/i.test(window.label)) ?? usage.windows.at(-1) ?? null
     : null;
 
-  useEffect(() => {
-    if (weeklyWindow === null) {
-      setTodayUsage(null);
-      return;
-    }
-    const now = Date.now();
-    const current: UsageSample = {
-      observedAt: now,
-      resetsAt: weeklyWindow.resetsAt,
-      usedPercent: weeklyWindow.usedPercent,
-    };
-    try {
-      const samples = parseUsageSamples(window.localStorage.getItem(USAGE_SAMPLES_STORAGE_KEY));
-      setTodayUsage(calculateTodayUsedPercent({
-        samples,
-        current,
-        dayStartedAt: localDayStart(now),
-      }));
-      window.localStorage.setItem(
-        USAGE_SAMPLES_STORAGE_KEY,
-        JSON.stringify(appendUsageSample(samples, current)),
-      );
-    } catch {
-      setTodayUsage(null);
-    }
-  }, [weeklyWindow]);
-
   if (weeklyWindow === null) return null;
 
   const usedPercent = Math.min(100, Math.max(0, weeklyWindow.usedPercent));
+  const todayUsage = usage?.status === "ok" ? usage.todayUsage : null;
   const todayWidth = todayUsage === null ? 0 : Math.min(usedPercent, todayUsage.usedPercent);
   const reset = formatUsageReset(weeklyWindow.resetsAt);
 
