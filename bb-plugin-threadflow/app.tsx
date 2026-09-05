@@ -53,6 +53,7 @@ import { parseThreadTitleBrand, type ThreadTitleBrand } from "./thread-title-bra
 import { isThreadNudgerMessageText } from "./thread-nudger-message";
 import { formatUserMessageTimestamp, type UserMessageTimestamp } from "./user-message-timestamp";
 import { JournalMarkdownEditor } from "./journal-editor";
+import { classifyThreadListState, threadIsWorking } from "./thread-list-state";
 import {
   formatJournalDate,
   isJournalDateKey,
@@ -1286,11 +1287,15 @@ function groupSidebarThreads(
   pullRequests: Readonly<Record<string, PluginSidebarPullRequest | null>>,
 ): Array<readonly [string, NativeThread[]]> {
   const working: NativeThread[] = [];
+  const waiting: NativeThread[] = [];
   const needsYou: NativeThread[] = [];
   const inReview: NativeThread[] = [];
   for (const thread of threads) {
-    if (threadIsWorking(thread)) {
+    const state = classifyThreadListState(thread);
+    if (state === "working") {
       working.push(thread);
+    } else if (state === "waiting") {
+      waiting.push(thread);
     } else if (pullRequests[thread.id]?.state === "open" || pullRequests[thread.id]?.state === "draft") {
       inReview.push(thread);
     } else {
@@ -1300,6 +1305,7 @@ function groupSidebarThreads(
   const groups: Array<readonly [string, NativeThread[]]> = [
     ["Needs you", needsYou],
   ];
+  if (waiting.length > 0) groups.push(["Waiting", waiting]);
   if (inReview.length > 0) groups.push(["In review", inReview]);
   groups.push(["Working", working]);
   return groups;
@@ -1540,12 +1546,6 @@ function SidebarThreadRow({
       </Dialog>
     </div>
   );
-}
-
-function threadIsWorking(thread: NativeThread): boolean {
-  const sideChatInProgress = thread.sideChats.some((sideChat) => sideChat.running && !sideChat.needsAttention);
-  return !thread.archived
-    && (sideChatInProgress || !thread.needsAttention && thread.status !== "idle" && thread.status !== "error");
 }
 
 function JournalSidebarNavigation({
@@ -2310,7 +2310,7 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
         {error === null ? null : <p className="px-2 py-1 text-[10px] text-destructive">{error}</p>}
         <div className="space-y-3">
           {groups.map(([title, groupThreads]) => groupThreads.length === 0 ? null : (
-            <section key={title} className={title === "Working" ? "opacity-50" : undefined}>
+            <section key={title} className={title === "Working" || title === "Waiting" ? "opacity-50" : undefined}>
               <div className="flex items-center justify-between px-2 pb-1 text-[10px] font-normal uppercase tracking-wide text-muted-foreground">
                 <span>{title}</span>
                 <span>{groupThreads.length}</span>

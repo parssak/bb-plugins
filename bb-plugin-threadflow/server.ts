@@ -57,6 +57,7 @@ const nativeThreadSchema = z.object({
   updatedAt: z.number(),
   archived: z.boolean(),
   needsAttention: z.boolean(),
+  queuedWork: z.enum(["none", "waiting", "failed"]),
   status: z.string(),
   sideChats: z.array(sideChatSchema),
 });
@@ -815,6 +816,8 @@ export default function plugin(bb: BbPluginApi) {
     markCompletionAlertReady(thread);
     scheduleCompletionAlertCheck();
   });
+  bb.events.on("message.queued", publishThreadsChanged);
+  bb.events.on("message.dispatched", publishThreadsChanged);
 
   const archiveSourceThread = async (threadId: string) => {
     const thread = await bb.sdk.threads.get({ threadId });
@@ -904,6 +907,7 @@ export default function plugin(bb: BbPluginApi) {
           updatedAt: thread.updatedAt,
           archived: thread.archivedAt !== null,
           needsAttention: thread.hasPendingInteraction,
+          queuedWork: thread.queuedWork,
           status: thread.status,
           sideChats: sideChatsBySource.get(thread.id) ?? [],
         }))

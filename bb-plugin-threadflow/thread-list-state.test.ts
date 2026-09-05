@@ -1,0 +1,34 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { classifyThreadListState } from "./thread-list-state.ts";
+
+function thread(overrides = {}) {
+  return {
+    archived: false,
+    needsAttention: false,
+    queuedWork: "none" as const,
+    sideChats: [],
+    status: "idle",
+    ...overrides,
+  };
+}
+
+test("idle and pending queued work share the waiting state", () => {
+  assert.equal(classifyThreadListState(thread({ queuedWork: "waiting" })), "waiting");
+  assert.equal(classifyThreadListState(thread({ status: "pending", queuedWork: "waiting" })), "waiting");
+});
+
+test("active work takes precedence over a queued follow-up", () => {
+  assert.equal(classifyThreadListState(thread({ status: "active", queuedWork: "waiting" })), "working");
+  assert.equal(classifyThreadListState(thread({
+    queuedWork: "waiting",
+    sideChats: [{ needsAttention: false, running: true }],
+  })), "working");
+});
+
+test("attention and failed queues remain needs-you states", () => {
+  assert.equal(classifyThreadListState(thread({ needsAttention: true, queuedWork: "waiting" })), "needs-you");
+  assert.equal(classifyThreadListState(thread({ status: "error", queuedWork: "waiting" })), "needs-you");
+  assert.equal(classifyThreadListState(thread({ queuedWork: "failed" })), "needs-you");
+});

@@ -1,9 +1,11 @@
 # Threadflow
 
 A compact replacement for BB's native thread list. It groups source threads into
-Needs you, In review, and Working; nests hidden side chats under their source;
+Needs you, Waiting, In review, and Working; nests hidden side chats under their source;
 shows pull requests, CI, and worktree diffs; and supports dialog-based rename,
 safe archive, drag-to-split, numbered shortcuts, and arrow-key navigation.
+Waiting follows BB's queued-work state, so scheduled sends and plugin-held waits
+share one section regardless of what condition will release them.
 Leading `[bb]` and `[bogi]` title tags render as their matching brand marks.
 The usage footer tracks local-time samples and highlights the portion of the
 weekly Codex allowance consumed since the user's midnight when history exists.

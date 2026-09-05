@@ -5,6 +5,37 @@ import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/tes
 
 import plugin from "./server.ts";
 
+test("thread list RPC preserves BB's aggregate queued-work state", async () => {
+  const scheduledThread = {
+    ...makeThreadResponse({
+      createdAt: Date.now(),
+      id: "thread-scheduled",
+      queuedWork: "waiting",
+      status: "idle",
+      title: "Send this later",
+      updatedAt: Date.now(),
+    }),
+    hasPendingInteraction: false,
+  };
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "threadflow-queue-test",
+    sdk: {
+      threads: {
+        list: async ({ archived, includeHidden }) => (
+          archived === false && includeHidden === false ? [scheduledThread] : []
+        ),
+      },
+      projects: { list: async () => [] },
+      providers: { list: async () => [] },
+    },
+  });
+  plugin(bb);
+
+  const result = await harness.behavior.callRpc("threads", { scope: "recent", query: "" });
+  assert.equal(result.threads[0]?.queuedWork, "waiting");
+  await harness.lifecycle.dispose();
+});
+
 test("automatic reviews are claimed once while manual reviews remain available", async () => {
   const sourceThread = makeThreadResponse({ id: "thread-source", sourceThreadId: null });
   const reviewThread = makeThreadResponse({
