@@ -2226,7 +2226,7 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
     ).finally(() => reviewsInFlightRef.current.delete(reviewKey));
   }, [rpc]);
   const groups = useMemo(() => groupSidebarThreads(threads, pullRequests), [pullRequests, threads]);
-  const flatThreads = groups.flatMap(([, groupThreads]) => groupThreads);
+  const flatThreads = useMemo(() => groups.flatMap(([, groupThreads]) => groupThreads), [groups]);
   const nativeThreadById = useMemo(
     () => new Map(nativeSidebarThreads.map((thread) => [thread.id, thread])),
     [nativeSidebarThreads],
@@ -2410,15 +2410,14 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
         && !event.shiftKey
         && /^[1-9]$/.test(event.key)
       ) {
-        const numberedRows = Array.from(
-          listRef.current?.querySelectorAll<HTMLElement>("[data-sidebar-thread-shortcut-target][data-sidebar-thread-id]") ?? [],
-        );
-        const row = numberedRows[Number(event.key) - 1];
-        const threadId = row?.dataset.sidebarThreadId;
-        if (threadId !== undefined) {
+        const shortcutThread = flatThreads[Number(event.key) - 1];
+        if (shortcutThread !== undefined) {
+          const hasVisibleRow = Array.from(
+            listRef.current?.querySelectorAll<HTMLElement>("[data-sidebar-thread-shortcut-target][data-sidebar-thread-id]") ?? [],
+          ).some((row) => row.dataset.sidebarThreadId === shortcutThread.id);
           event.preventDefault();
           event.stopImmediatePropagation();
-          openSidebarTarget(threadId, true);
+          openSidebarTarget(shortcutThread.id, hasVisibleRow);
         }
         return;
       }
@@ -2515,7 +2514,7 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener(RETURN_TO_SIDEBAR_EVENT, onReturnToSidebar);
     };
-  }, [focusSidebarRow, openSidebarTarget, runThreadCommand, selectedThreadId]);
+  }, [flatThreads, focusSidebarRow, openSidebarTarget, runThreadCommand, selectedThreadId]);
 
   return (
     <div
@@ -2537,12 +2536,12 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
                   onClick={toggleWaitingCollapsed}
                 >
                   <span className="flex items-center gap-1">
+                    <span>{title}</span>
                     <HugeiconsIcon
                       icon={ArrowRight01Icon}
-                      className={`-ml-4 size-3 transition-transform ${waitingCollapsed ? "" : "rotate-90"}`}
+                      className={`size-3 transition-transform ${waitingCollapsed ? "" : "rotate-90"}`}
                       aria-hidden
                     />
-                    <span>{title}</span>
                   </span>
                   <span>{groupThreads.length}</span>
                 </button>
