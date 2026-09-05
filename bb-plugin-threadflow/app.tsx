@@ -1841,7 +1841,7 @@ function JournalHeader({ subPath }: PluginNavPanelProps) {
       </button>
       <label className="relative min-w-0 cursor-pointer rounded px-1 outline-none focus-within:ring-1 focus-within:ring-muted-foreground/40">
         <span
-          className="block truncate text-sm font-semibold tabular-nums text-foreground"
+          className="block truncate text-sm font-semibold uppercase tabular-nums text-foreground"
           style={{ fontFamily: '"JetBrains Mono", var(--font-mono, ui-monospace, monospace)' }}
         >
           {heading}
