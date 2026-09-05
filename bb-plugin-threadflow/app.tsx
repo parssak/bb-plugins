@@ -171,7 +171,7 @@ const NATIVE_CHAT_CSS = `
 
   [${MESSAGE_TIMESTAMP_ATTRIBUTE}] {
     position: absolute;
-    top: calc(100% + 3px);
+    top: calc(100% + 5px);
     right: 1.25rem;
     z-index: 12;
     white-space: nowrap;
@@ -330,8 +330,7 @@ const JOURNAL_EDITOR_CSS = `
   }
 
   .threadflow-journal-editor .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
-    color: var(--muted-foreground);
-    text-decoration: line-through;
+    opacity: 0.55;
   }
 
   .threadflow-journal-editor .tiptap blockquote {
@@ -2600,7 +2599,6 @@ export default definePluginApp((app) => {
         ) { display: none !important; }
 
         [data-testid="app-desktop-sidebar-trigger"],
-        [data-testid="app-sidebar-trigger-overlay"],
         [data-sidebar="sidebar"] :is(button, [role="button"]):is(
           [aria-label="go back" i],
           [aria-label="go forward" i]

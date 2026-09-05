@@ -3,17 +3,25 @@ import { randomUUID } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
+import {
+  fetchGithubWorkflowRun,
+  parseGithubWorkflowRunUrl,
+  type GithubWorkflowRun,
+  type GithubWorkflowRunIdentity,
+} from "./github-workflow-run.ts";
+
 export const WAIT_CHECKER_TITLE_PREFIX = "Threadflow wait check:";
 
 const WAIT_MARKER_PREFIX = "THREADFLOW_WAIT_V1 ";
 const MONITOR_INTERVAL_MS = 2_000;
 const DIRECT_CHECK_INTERVAL_MS = 30_000;
+const INSTRUCTION_INITIAL_DELAY_MS = 20 * 60_000;
+const INSTRUCTION_RECHECK_INTERVAL_MS = 45 * 60_000;
 const MAX_INSTRUCTION_CHECKS = 64;
 const MAX_CONSECUTIVE_CHECK_ERRORS = 3;
 const WORKER_TIMEOUT_MS = 120_000;
 const ARMING_RECOVERY_GRACE_MS = 30_000;
 const INSTRUCTION_CHECK_MODELS = ["gpt-5.3-codex-spark", "gpt-5.6-luna"] as const;
-const INSTRUCTION_BACKOFF_MS = [60_000, 2 * 60_000, 5 * 60_000, 10 * 60_000, 30 * 60_000] as const;
 
 export const waitConditionSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -23,6 +31,10 @@ export const waitConditionSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("pull_request_merged"),
     targetThreadId: z.string().min(1).max(100),
+  }).strict(),
+  z.object({
+    kind: z.literal("github_actions_succeeded"),
+    runUrls: z.array(z.string().url().max(500)).min(1).max(10),
   }).strict(),
   z.object({
     kind: z.literal("instruction"),
@@ -51,6 +63,17 @@ const resolvedConditionSchema = z.discriminatedUnion("kind", [
     environmentId: z.string(),
     pullRequestNumber: z.number().int().positive(),
     pullRequestUrl: z.string(),
+  }).strict(),
+  z.object({
+    kind: z.literal("github_actions_succeeded"),
+    runs: z.array(z.object({
+      owner: z.string(),
+      repository: z.string(),
+      runId: z.number().int().positive(),
+      runUrl: z.string().url(),
+      workflowName: z.string(),
+      headSha: z.string().regex(/^[0-9a-f]{40}$/),
+    }).strict()).min(1).max(10),
   }).strict(),
   z.object({
     kind: z.literal("instruction"),
@@ -206,10 +229,6 @@ function parseEvaluatorResult(output: string): EvaluatorResult | null {
   return null;
 }
 
-function instructionBackoffMs(checkCount: number): number {
-  return INSTRUCTION_BACKOFF_MS[Math.min(Math.max(checkCount - 1, 0), INSTRUCTION_BACKOFF_MS.length - 1)]!;
-}
-
 function waitForMonitorTick(signal: AbortSignal): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   return new Promise((resolve) => {
@@ -235,7 +254,14 @@ function formatToolResult(result: ArmWaitResult): string {
 
 export function registerThreadflowWaits(
   bb: BbPluginApi,
-  options: { excludedThreadTitlePrefixes?: readonly string[] } = {},
+  options: {
+    excludedThreadTitlePrefixes?: readonly string[];
+    getGithubToken?: () => Promise<string | undefined>;
+    inspectGithubWorkflowRun?: (
+      identity: GithubWorkflowRunIdentity,
+      signal?: AbortSignal,
+    ) => Promise<GithubWorkflowRun>;
+  } = {},
 ): void {
   const db = bb.storage.database();
   bb.storage.migrate(db, [
@@ -296,6 +322,12 @@ export function registerThreadflowWaits(
   const listWaits = (where: string, ...params: unknown[]): WaitRecord[] => (
     (db.prepare(`SELECT * FROM threadflow_waits WHERE ${where}`).all(...params) as WaitRow[]).map(rowToWait)
   );
+  const inspectGithubWorkflowRun = options.inspectGithubWorkflowRun ?? (async (identity, signal) => (
+    fetchGithubWorkflowRun(identity, {
+      token: await options.getGithubToken?.(),
+      ...(signal === undefined ? {} : { signal }),
+    })
+  ));
 
   const resolveCondition = async (
     sleepingThreadId: string,
@@ -319,6 +351,34 @@ export function registerThreadflowWaits(
         condition: { ...condition, targetTitle: title },
         label: `Waiting for “${title}” to be archived`,
         alreadySatisfied: target.archivedAt === null ? null : `“${title}” is already archived.`,
+      };
+    }
+
+    if (condition.kind === "github_actions_succeeded") {
+      const identities = condition.runUrls.map(parseGithubWorkflowRunUrl);
+      const runs = await Promise.all(identities.map((identity) => inspectGithubWorkflowRun(identity)));
+      const failed = runs.find((run) => run.status === "completed" && run.conclusion !== "success");
+      if (failed !== undefined) {
+        throw new Error(`${failed.workflowName} already completed with conclusion ${failed.conclusion ?? "unknown"}.`);
+      }
+      return {
+        condition: {
+          kind: condition.kind,
+          runs: runs.map(({ owner, repository, runId, runUrl, workflowName, headSha }) => ({
+            owner,
+            repository,
+            runId,
+            runUrl,
+            workflowName,
+            headSha,
+          })),
+        },
+        label: runs.length === 1
+          ? `Waiting for GitHub Actions: ${runs[0]!.workflowName}`
+          : `Waiting for ${runs.length} GitHub Actions runs`,
+        alreadySatisfied: runs.every((run) => run.status === "completed" && run.conclusion === "success")
+          ? `${runs.length === 1 ? runs[0]!.workflowName : `${runs.length} workflow runs`} already succeeded.`
+          : null,
       };
     }
 
@@ -463,7 +523,9 @@ export function registerThreadflowWaits(
     const now = Date.now();
     const waitId = randomUUID();
     const deadlineAt = now + timeoutMinutes * 60_000;
-    const nextCheckAt = resolved.condition.kind === "instruction" ? now + MONITOR_INTERVAL_MS : now + DIRECT_CHECK_INTERVAL_MS;
+    const nextCheckAt = resolved.condition.kind === "instruction"
+      ? now + INSTRUCTION_INITIAL_DELAY_MS
+      : now + DIRECT_CHECK_INTERVAL_MS;
     try {
       db.prepare(`INSERT INTO threadflow_waits (
         id, thread_id, condition_kind, condition_json, state, label, resume_prompt,
@@ -526,7 +588,7 @@ export function registerThreadflowWaits(
     return { outcome: "armed", waitId, deadlineAt, label: resolved.label };
   };
 
-  const evaluateDirectWait = async (wait: WaitRecord): Promise<void> => {
+  const evaluateDirectWait = async (wait: WaitRecord, signal: AbortSignal): Promise<void> => {
     if (wait.condition.kind === "instruction") return;
     if (wait.condition.kind === "thread_archived") {
       try {
@@ -541,6 +603,47 @@ export function registerThreadflowWaits(
         }
       } catch (cause) {
         bb.log.debug(`Could not check thread wait ${wait.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      }
+      db.prepare("UPDATE threadflow_waits SET next_check_at = ?, updated_at = ? WHERE id = ? AND state = 'waiting'")
+        .run(Date.now() + DIRECT_CHECK_INTERVAL_MS, Date.now(), wait.id);
+      return;
+    }
+
+    if (wait.condition.kind === "github_actions_succeeded") {
+      try {
+        const runs: GithubWorkflowRun[] = [];
+        for (const expected of wait.condition.runs) {
+          const observed = await inspectGithubWorkflowRun(expected, signal);
+          if (observed.headSha !== expected.headSha) {
+            await releaseWait(wait.id, {
+              outcome: "condition_impossible",
+              observedAt: Date.now(),
+              detail: `${expected.workflowName} no longer points to commit ${expected.headSha}.`,
+            });
+            return;
+          }
+          runs.push(observed);
+        }
+        const failed = runs.find((run) => run.status === "completed" && run.conclusion !== "success");
+        if (failed !== undefined) {
+          await releaseWait(wait.id, {
+            outcome: "condition_impossible",
+            observedAt: Date.now(),
+            detail: `${failed.workflowName} completed with conclusion ${failed.conclusion ?? "unknown"}.`,
+          });
+          return;
+        }
+        if (runs.every((run) => run.status === "completed" && run.conclusion === "success")) {
+          await releaseWait(wait.id, {
+            outcome: "condition_met",
+            observedAt: Date.now(),
+            detail: `${runs.length === 1 ? runs[0]!.workflowName : `${runs.length} GitHub Actions runs`} succeeded.`,
+          });
+          return;
+        }
+      } catch (cause) {
+        if (signal.aborted) return;
+        bb.log.debug(`Could not check GitHub Actions wait ${wait.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
       }
       db.prepare("UPDATE threadflow_waits SET next_check_at = ?, updated_at = ? WHERE id = ? AND state = 'waiting'")
         .run(Date.now() + DIRECT_CHECK_INTERVAL_MS, Date.now(), wait.id);
@@ -631,7 +734,6 @@ export function registerThreadflowWaits(
         },
         visibility: "hidden",
         title: `${WAIT_CHECKER_TITLE_PREFIX} ${wait.id}`,
-        startedOnBehalfOf: { initiator: "agent", senderThreadId: wait.threadId },
         prompt: [
           "You are a read-only condition checker for a sleeping coding agent.",
           "Inspect current state with tools only as needed. Do not modify files, branches, pull requests, threads, or external services.",
@@ -716,7 +818,7 @@ export function registerThreadflowWaits(
       });
       return;
     }
-    const nextCheckAt = Date.now() + instructionBackoffMs(current.checkCount);
+    const nextCheckAt = Date.now() + INSTRUCTION_RECHECK_INTERVAL_MS;
     db.prepare(`UPDATE threadflow_waits
       SET next_check_at = ?, consecutive_errors = ?, last_evidence = ?, updated_at = ?
       WHERE id = ? AND state = 'waiting'`)
@@ -789,7 +891,7 @@ export function registerThreadflowWaits(
       now,
     )) {
       if (signal.aborted) return;
-      await evaluateDirectWait(wait);
+      await evaluateDirectWait(wait, signal);
     }
     const instructionWait = listWaits(
       "state = 'waiting' AND condition_kind = 'instruction' AND next_check_at IS NOT NULL AND next_check_at <= ? ORDER BY next_check_at LIMIT 1",
@@ -845,7 +947,8 @@ export function registerThreadflowWaits(
   };
   const failWaitsTargetingDeletedThread = async (threadId: string) => {
     const waits = listWaits("state = 'waiting'").filter((wait) => (
-      wait.condition.kind !== "instruction" && wait.condition.targetThreadId === threadId
+      (wait.condition.kind === "thread_archived" || wait.condition.kind === "pull_request_merged")
+      && wait.condition.targetThreadId === threadId
     ));
     for (const wait of waits) {
       await releaseWait(wait.id, {
@@ -902,7 +1005,7 @@ export function registerThreadflowWaits(
 
   bb.agents.registerTool({
     name: "threadflow_wait",
-    description: "Sleep this thread until another BB thread is archived, its current pull request is merged, or a cheap read-only agent judges a custom condition ready.",
+    description: "Sleep this thread until another BB thread is archived, its current pull request is merged, exact GitHub Actions runs succeed, or a cheap read-only agent judges a custom condition ready.",
     instructions: "Use typed conditions when possible. After an armed or already-waiting result, end the turn immediately and do not poll. Continue only when the result says the condition was already satisfied.",
     presentation: {
       label: {

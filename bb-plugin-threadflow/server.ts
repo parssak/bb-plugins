@@ -298,7 +298,6 @@ function parseGeneratedSummary(output: string): z.infer<typeof generatedSummaryS
 }
 
 export default function plugin(bb: BbPluginApi) {
-  registerThreadflowWaits(bb, { excludedThreadTitlePrefixes: [SUMMARY_WORKER_TITLE_PREFIX] });
   const settings = bb.settings.define({
     completionAlert: {
       type: "select",
@@ -306,6 +305,16 @@ export default function plugin(bb: BbPluginApi) {
       options: ["Off", "Chime", "Voice"],
       default: "Chime",
     },
+    githubToken: {
+      type: "string",
+      label: "GitHub token",
+      description: "Fine-grained token with Actions read access, required for waits on private repositories.",
+      secret: true,
+    },
+  });
+  registerThreadflowWaits(bb, {
+    excludedThreadTitlePrefixes: [SUMMARY_WORKER_TITLE_PREFIX],
+    getGithubToken: async () => (await settings.get()).githubToken,
   });
   const viewingThreads = new Map<string, string>();
   const summariesInFlight = new Set<string>();
