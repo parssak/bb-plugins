@@ -1677,14 +1677,12 @@ function JournalHeader({ subPath }: PluginNavPanelProps) {
   );
 }
 
-type JournalSaveState = "dirty" | "error" | "saved" | "saving";
-
 function JournalDay({ dateKey }: { dateKey: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const [content, setContent] = useState("");
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [saveState, setSaveState] = useState<JournalSaveState>("saved");
+  const [saveError, setSaveError] = useState(false);
   const desiredContentRef = useRef("");
   const savedContentRef = useRef("");
   const readyRef = useRef(false);
@@ -1707,7 +1705,7 @@ function JournalDay({ dateKey }: { dateKey: string }) {
       savedContentRef.current = nextContent;
       readyRef.current = true;
       setContent(nextContent);
-      setSaveState("saved");
+      setSaveError(false);
       setReady(true);
     } catch (cause) {
       if (!mountedRef.current || loadSequenceRef.current !== sequence) return;
@@ -1727,15 +1725,12 @@ function JournalDay({ dateKey }: { dateKey: string }) {
         saveAgainRef.current = false;
         const nextContent = desiredContentRef.current;
         if (nextContent === savedContentRef.current) break;
-        if (mountedRef.current) setSaveState("saving");
         await rpc.call("save_journal_entry", { dateKey, content: nextContent });
         savedContentRef.current = nextContent;
       } while (saveAgainRef.current);
-      if (mountedRef.current) {
-        setSaveState(desiredContentRef.current === savedContentRef.current ? "saved" : "dirty");
-      }
+      if (mountedRef.current) setSaveError(false);
     } catch {
-      if (mountedRef.current) setSaveState("error");
+      if (mountedRef.current) setSaveError(true);
     } finally {
       saveInFlightRef.current = false;
     }
@@ -1752,7 +1747,6 @@ function JournalDay({ dateKey }: { dateKey: string }) {
   }, [flush, load]);
   useEffect(() => {
     if (!ready || content === savedContentRef.current) return;
-    setSaveState("dirty");
     const timer = window.setTimeout(() => void flush(), 450);
     return () => window.clearTimeout(timer);
   }, [content, flush, ready]);
@@ -1774,7 +1768,7 @@ function JournalDay({ dateKey }: { dateKey: string }) {
   }
 
   return (
-    <main className="mx-auto flex h-full w-full max-w-3xl flex-col px-6 py-8 md:px-10 md:py-10">
+    <main className="mx-auto flex h-full w-full max-w-3xl flex-col px-6 pb-8 pt-2 md:px-10 md:pb-10 md:pt-3">
       <JournalMarkdownEditor
         initialMarkdown={content}
         ariaLabel={`Journal for ${heading}`}
@@ -1784,9 +1778,11 @@ function JournalDay({ dateKey }: { dateKey: string }) {
         }}
         onBlur={() => void flush()}
       />
-      <span className={saveState === "error" ? "mt-2 shrink-0 text-right text-xs text-destructive" : "mt-2 shrink-0 text-right text-xs text-muted-foreground/60"}>
-        {saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved" : saveState === "error" ? "Couldn’t save" : "Saved"}
-      </span>
+      {saveError ? (
+        <span role="status" className="mt-2 shrink-0 text-right text-xs text-destructive">
+          Couldn’t save
+        </span>
+      ) : null}
     </main>
   );
 }
