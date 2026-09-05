@@ -52,6 +52,7 @@ import {
 import { parseThreadTitleBrand, type ThreadTitleBrand } from "./thread-title-brand";
 import { isThreadNudgerMessageText } from "./thread-nudger-message";
 import { formatUserMessageTimestamp, type UserMessageTimestamp } from "./user-message-timestamp";
+import { JournalMarkdownEditor } from "./journal-editor";
 import {
   formatJournalDate,
   isJournalDateKey,
@@ -155,6 +156,146 @@ const NATIVE_CHAT_CSS = `
 
   [${MESSAGE_TIMESTAMP_HOST_ATTRIBUTE}]:hover > [${MESSAGE_TIMESTAMP_ATTRIBUTE}] {
     opacity: 0.65;
+  }
+`;
+const JOURNAL_EDITOR_CSS = `
+  .threadflow-journal-editor .tiptap {
+    min-height: 100%;
+    padding-bottom: 35vh;
+    color: var(--foreground);
+    font-size: 1rem;
+    line-height: 1.75;
+    outline: none;
+    overflow-wrap: break-word;
+  }
+
+  .threadflow-journal-editor .tiptap > :first-child,
+  .threadflow-journal-editor .tiptap li > :first-child,
+  .threadflow-journal-editor .tiptap blockquote > :first-child {
+    margin-top: 0;
+  }
+
+  .threadflow-journal-editor .tiptap p {
+    margin-top: 1em;
+  }
+
+  .threadflow-journal-editor .tiptap :is(h1, h2, h3, h4, h5, h6) {
+    margin-bottom: 0;
+    color: var(--foreground);
+    font-weight: 600;
+  }
+
+  .threadflow-journal-editor .tiptap h1 { margin-top: 1.25em; font-size: 1.75em; line-height: 1.3; }
+  .threadflow-journal-editor .tiptap h2 { margin-top: 1.6em; font-size: 1.35em; line-height: 1.4; }
+  .threadflow-journal-editor .tiptap h3 { margin-top: 1.35em; font-size: 1.15em; line-height: 1.45; }
+  .threadflow-journal-editor .tiptap :is(h4, h5, h6) { margin-top: 1.25em; font-size: 1em; line-height: 1.5; }
+
+  .threadflow-journal-editor .tiptap :is(ul, ol) {
+    margin-top: 1em;
+    padding-left: 1.5em;
+  }
+
+  .threadflow-journal-editor .tiptap ul { list-style: disc; }
+  .threadflow-journal-editor .tiptap ol { list-style: decimal; }
+  .threadflow-journal-editor .tiptap li { margin-top: 0.35em; padding-left: 0.25em; }
+  .threadflow-journal-editor .tiptap li::marker { color: var(--muted-foreground); }
+  .threadflow-journal-editor .tiptap li > :is(p, ul, ol) { margin-top: 0.35em; }
+
+  .threadflow-journal-editor .tiptap ul[data-type="taskList"] {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  .threadflow-journal-editor .tiptap ul[data-type="taskList"] ul[data-type="taskList"] {
+    margin-top: 0;
+    padding-left: 1.5em;
+  }
+
+  .threadflow-journal-editor .tiptap ul[data-type="taskList"] li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6em;
+    margin-top: 0.4em;
+    padding-left: 0;
+  }
+
+  .threadflow-journal-editor .tiptap ul[data-type="taskList"] li > label {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    height: 1.75em;
+    user-select: none;
+  }
+
+  .threadflow-journal-editor .tiptap ul[data-type="taskList"] li > div {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  .threadflow-journal-editor .tiptap ul[data-type="taskList"] li > div > p:first-child {
+    margin-top: 0;
+  }
+
+  .threadflow-journal-editor .tiptap ul[data-type="taskList"] input[type="checkbox"] {
+    display: block;
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--primary);
+  }
+
+  .threadflow-journal-editor .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
+    color: var(--muted-foreground);
+    text-decoration: line-through;
+  }
+
+  .threadflow-journal-editor .tiptap blockquote {
+    margin-top: 1em;
+    border-left: 2px solid var(--border);
+    padding-left: 1em;
+    color: var(--muted-foreground);
+  }
+
+  .threadflow-journal-editor .tiptap code {
+    border-radius: 0.25rem;
+    background: var(--muted);
+    padding: 0.1em 0.3em;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 0.875em;
+  }
+
+  .threadflow-journal-editor .tiptap pre {
+    margin-top: 1em;
+    overflow-x: auto;
+    border-radius: var(--radius);
+    background: var(--muted);
+    padding: 0.75em 1em;
+    font-size: 0.875em;
+    line-height: 1.5;
+  }
+
+  .threadflow-journal-editor .tiptap pre code { background: none; padding: 0; font-size: inherit; }
+  .threadflow-journal-editor .tiptap strong { font-weight: 600; }
+  .threadflow-journal-editor .tiptap a {
+    color: inherit;
+    font-weight: 500;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklab, currentColor 35%, transparent);
+  }
+  .threadflow-journal-editor .tiptap a:hover { text-decoration-color: currentColor; }
+  .threadflow-journal-editor .tiptap hr { margin-top: 2em; border: 0; border-top: 1px solid var(--border); }
+
+  .threadflow-journal-editor .tiptap p.is-editor-empty:first-child::before {
+    float: left;
+    height: 0;
+    color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+    content: attr(data-placeholder);
+    pointer-events: none;
+  }
+
+  .threadflow-journal-editor .tiptap ::selection {
+    background: color-mix(in oklab, var(--primary) 22%, transparent);
   }
 `;
 
@@ -1628,19 +1769,14 @@ function JournalDay({ dateKey }: { dateKey: string }) {
 
   return (
     <main className="mx-auto flex h-full w-full max-w-3xl flex-col px-6 py-8 md:px-10 md:py-10">
-      <textarea
-        autoFocus
-        value={content}
-        maxLength={100_000}
-        spellCheck
-        aria-label={`Journal for ${heading}`}
-        placeholder="What are you trying to achieve today?"
-        onChange={(event) => {
-          desiredContentRef.current = event.target.value;
-          setContent(event.target.value);
+      <JournalMarkdownEditor
+        initialMarkdown={content}
+        ariaLabel={`Journal for ${heading}`}
+        onMarkdownChange={(nextContent) => {
+          desiredContentRef.current = nextContent;
+          setContent(nextContent);
         }}
         onBlur={() => void flush()}
-        className="min-h-0 flex-1 resize-none bg-transparent text-base leading-7 text-foreground outline-none placeholder:text-muted-foreground/35"
       />
       <span className={saveState === "error" ? "mt-2 shrink-0 text-right text-xs text-destructive" : "mt-2 shrink-0 text-right text-xs text-muted-foreground/60"}>
         {saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved" : saveState === "error" ? "Couldn’t save" : "Saved"}
@@ -2262,6 +2398,7 @@ export default definePluginApp((app) => {
         }
 
         ${NATIVE_CHAT_CSS}
+        ${JOURNAL_EDITOR_CSS}
       `;
       document.head.append(style);
 
