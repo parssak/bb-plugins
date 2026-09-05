@@ -19,7 +19,10 @@ test("rejects impossible calendar dates", () => {
 });
 
 test("formats the daily heading", () => {
-  assert.equal(formatJournalDate("2026-09-05", "en-US"), "Saturday, September 5, 2026");
+  const currentDate = new Date(2026, 8, 5, 12);
+  assert.equal(formatJournalDate("2026-09-05", "en-US", currentDate), "Sat, Sep 05");
+  assert.equal(formatJournalDate("2026-11-15", "en-US", currentDate), "Sun, Nov 15");
+  assert.equal(formatJournalDate("2025-09-05", "en-US", currentDate), "Fri, Sep 05, 2025");
 });
 
 test("moves between local calendar days", () => {

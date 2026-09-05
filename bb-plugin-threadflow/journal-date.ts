@@ -20,15 +20,16 @@ export function isJournalDateKey(value: string): boolean {
 
 export function formatJournalDate(
   dateKey: string,
-  locales?: Intl.LocalesArgument,
+  locales: Intl.LocalesArgument = "en-US",
+  currentDate = new Date(),
 ): string {
   if (!isJournalDateKey(dateKey)) return dateKey;
   const [year, month, day] = dateKey.split("-").map(Number) as [number, number, number];
   return new Intl.DateTimeFormat(locales, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    year: "numeric",
+    weekday: "short",
+    month: "short",
+    day: "2-digit",
+    ...(year === currentDate.getFullYear() ? {} : { year: "numeric" }),
   }).format(new Date(year, month - 1, day, 12));
 }
 

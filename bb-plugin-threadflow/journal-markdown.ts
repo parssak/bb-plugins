@@ -10,6 +10,7 @@ export function journalMarkdownExtensions() {
     TaskItem.configure({ nested: true }),
     Placeholder.configure({ placeholder: "What are you trying to achieve today?" }),
     Markdown.configure({
+      indentation: { style: "space", size: 2 },
       markedOptions: { gfm: true },
     }),
   ];

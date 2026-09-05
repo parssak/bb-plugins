@@ -168,6 +168,7 @@ const JOURNAL_EDITOR_CSS = `
     line-height: 1.75;
     outline: none;
     overflow-wrap: break-word;
+    tab-size: 2;
   }
 
   .threadflow-journal-editor .tiptap > :first-child,
@@ -199,7 +200,7 @@ const JOURNAL_EDITOR_CSS = `
   .threadflow-journal-editor .tiptap ul { list-style: disc; }
   .threadflow-journal-editor .tiptap ol { list-style: decimal; }
   .threadflow-journal-editor .tiptap li { margin-top: 0.35em; padding-left: 0.25em; }
-  .threadflow-journal-editor .tiptap li::marker { color: var(--muted-foreground); }
+  .threadflow-journal-editor .tiptap li::marker { color: var(--warning); }
   .threadflow-journal-editor .tiptap li > :is(p, ul, ol) { margin-top: 0.35em; }
 
   .threadflow-journal-editor .tiptap ul[data-type="taskList"] {
@@ -243,7 +244,7 @@ const JOURNAL_EDITOR_CSS = `
     height: 15px;
     margin: 0;
     cursor: pointer;
-    accent-color: var(--primary);
+    accent-color: var(--warning);
   }
 
   .threadflow-journal-editor .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
@@ -1645,7 +1646,12 @@ function JournalHeader({ subPath }: PluginNavPanelProps) {
         <HugeiconsIcon icon={ArrowLeft01Icon} className="size-4" aria-hidden />
       </button>
       <label className="relative min-w-0 cursor-pointer rounded px-1 outline-none focus-within:ring-1 focus-within:ring-muted-foreground/40">
-        <span className="block truncate text-sm font-semibold text-foreground">{heading}</span>
+        <span
+          className="block truncate text-sm font-semibold tabular-nums text-foreground"
+          style={{ fontFamily: '"JetBrains Mono", var(--font-mono, ui-monospace, monospace)' }}
+        >
+          {heading}
+        </span>
         <input
           type="date"
           value={dateKey}

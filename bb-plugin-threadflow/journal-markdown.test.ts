@@ -19,3 +19,16 @@ test("round-trips task lists and ordinary markdown lists", () => {
   assert.equal(editor.getJSON().content?.[0]?.content?.[1]?.attrs?.checked, true);
   editor.destroy();
 });
+
+test("serializes nested lists with two-space indentation", () => {
+  const markdown = "- Parent\n  - Child\n\n- [ ] Task\n  - [ ] Nested task";
+  const editor = new Editor({
+    element: null,
+    extensions: journalMarkdownExtensions(),
+    content: markdown,
+    contentType: "markdown",
+  });
+
+  assert.equal(editor.getMarkdown(), markdown);
+  editor.destroy();
+});
