@@ -1057,7 +1057,7 @@ function NativeChatSummary({ threadId }: { threadId: string }) {
       {summary?.dismissed === false ? (
         <div
           data-bb-plugin="threadflow"
-          className="relative z-30 rounded-xl border border-border bg-background p-4 text-foreground shadow-lg"
+          className="relative z-30 px-4 py-6 text-foreground"
           aria-label="Chat summary"
           onKeyDown={(event) => {
             if (
@@ -2539,7 +2539,7 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
                   <span className="flex items-center gap-1">
                     <HugeiconsIcon
                       icon={ArrowRight01Icon}
-                      className={`size-3 transition-transform ${waitingCollapsed ? "" : "rotate-90"}`}
+                      className={`-ml-4 size-3 transition-transform ${waitingCollapsed ? "" : "rotate-90"}`}
                       aria-hidden
                     />
                     <span>{title}</span>
