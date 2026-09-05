@@ -1602,8 +1602,8 @@ function JournalSidebarNavigation({
       aria-current={isActive ? "page" : undefined}
       onClick={() => activate(journalItem.id, { openInSplit: false })}
       className={highlight
-        ? "grid size-7 place-items-center rounded-md bg-blue-500/10 text-blue-500 outline-none hover:bg-blue-500/15 focus-visible:ring-1 focus-visible:ring-blue-500/50"
-        : "grid size-7 place-items-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"}
+        ? "grid size-7 place-items-center rounded-md bg-blue-500/10 text-blue-500 outline-none [app-region:no-drag] [-webkit-app-region:no-drag] hover:bg-blue-500/15 focus-visible:ring-1 focus-visible:ring-blue-500/50"
+        : "grid size-7 place-items-center rounded-md text-muted-foreground outline-none [app-region:no-drag] [-webkit-app-region:no-drag] hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"}
     >
       <HugeiconsIcon icon={File01Icon} className="size-4" aria-hidden />
     </button>,
