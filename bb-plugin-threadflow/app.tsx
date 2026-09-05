@@ -1441,9 +1441,9 @@ function groupSidebarThreads(
   const groups: Array<readonly [string, NativeThread[]]> = [
     ["Needs you", needsYou],
   ];
-  if (waiting.length > 0) groups.push(["Waiting", waiting]);
   if (inReview.length > 0) groups.push(["In review", inReview]);
   groups.push(["Working", working]);
+  if (waiting.length > 0) groups.push(["Waiting", waiting]);
   return groups;
 }
 
