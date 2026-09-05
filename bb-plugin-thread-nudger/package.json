@@ -1,0 +1,26 @@
+{
+  "name": "bb-plugin-thread-nudger",
+  "version": "0.2.0",
+  "type": "module",
+  "engines": {
+    "bb": ">=0.41",
+    "bbPluginSdk": ">=0.4.34"
+  },
+  "bb": {
+    "name": "Thread Nudger",
+    "description": "Steers check-ins into active BB threads after 7, 22, and 52 minutes.",
+    "branding": {
+      "logo": {
+        "light": "./assets/logo.svg"
+      }
+    },
+    "server": "./server.ts",
+    "skills": []
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.47",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "zod": "^4.3.6"
+  }
+}

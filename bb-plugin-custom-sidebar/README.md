@@ -1,0 +1,33 @@
+# Threadflow
+
+A compact replacement for BB's native thread list. It groups source threads into
+Needs you, In review, and Working; nests hidden side chats under their source;
+shows pull requests, CI, and worktree diffs; and supports dialog-based rename,
+safe archive, drag-to-split, numbered shortcuts, and arrow-key navigation.
+
+Native BB chats gain stable thread accents and side-chat panels,
+one-click side-chat handoffs, auto-merge controls, and Luna-generated summaries
+for unread replies of at least 400 characters. Handoffs ask the side chat for a
+terse fenced summary and relay only that summary to its source thread. Summaries
+keep the native composer usable and offer up to three terse follow-up actions.
+When a new pull request appears, its review side chat starts automatically in the
+background.
+
+Keyboard commands:
+
+- Command-1 through Command-9 open numbered visible threads.
+- Command-E is left to BB's native terminal handling.
+- Command-Shift-E opens a review side chat.
+- Command-Shift-L asks what Linus Torvalds would think.
+- Command-Shift-T toggles an existing TLDR or generates one when none exists.
+- Command-Shift-M merges an eligible pull request.
+- Command-Shift-A archives or unarchives the current thread.
+- Escape and arrow keys return to and navigate the thread list; typing returns to the chat composer.
+
+Archiving a managed-worktree source archives its environment's threads so BB can
+clean up the worktree, and is refused while the source or a child chat is running.
+
+```sh
+bb plugin build
+bb plugin install .
+```
