@@ -36,6 +36,8 @@ import {
   type UsageSample,
 } from "./usage-tracking";
 import { parseThreadTitleBrand, type ThreadTitleBrand } from "./thread-title-brand";
+import { isThreadNudgerMessageText } from "./thread-nudger-message";
+import { formatUserMessageTimestamp, type UserMessageTimestamp } from "./user-message-timestamp";
 
 type ChatTarget = {
   id: string;
@@ -49,11 +51,11 @@ type ChatTarget = {
 };
 type TypeInChatDetail = { threadId: string; text: string };
 
-const TYPE_IN_CHAT_EVENT = "custom-sidebar:type-in-chat";
+const TYPE_IN_CHAT_EVENT = "threadflow:type-in-chat";
 const THREADS_CHANGED_CHANNEL = "threads-changed";
-const RETURN_TO_SIDEBAR_EVENT = "custom-sidebar:return-to-sidebar";
-const KEYBOARD_FOCUS_MODE_EVENT = "custom-sidebar:keyboard-focus-mode";
-const DISMISS_CHAT_SUMMARY_EVENT = "custom-sidebar:dismiss-chat-summary";
+const RETURN_TO_SIDEBAR_EVENT = "threadflow:return-to-sidebar";
+const KEYBOARD_FOCUS_MODE_EVENT = "threadflow:keyboard-focus-mode";
+const DISMISS_CHAT_SUMMARY_EVENT = "threadflow:dismiss-chat-summary";
 const SUMMARIES_CHANGED_CHANNEL = "chat-summaries-changed";
 const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 const REVIEW_WORKTREE_PROMPT = "Review the changes in this worktree";
@@ -76,13 +78,24 @@ const BB_LOGO_DATA_URL = "data:image/webp;base64,"
 const VIEWER_CLIENT_ID = `native-chat-${Math.random().toString(36).slice(2)}`;
 const MESSAGE_BUBBLE_TAIL_PATH = "M8.33594 0.5C8.7668 0.821894 9.07248 1.04615 9.30176 1.21094C9.55938 1.3961 9.70552 1.49813 9.8252 1.58789C9.97196 1.69798 10.063 1.78007 10.2666 1.97949C9.91758 2.45087 9.86145 3.11747 9.9082 3.72559C9.97604 4.60748 10.2761 5.65946 10.6572 6.67578C11.041 7.69919 11.519 8.71995 11.9658 9.5498C12.3707 10.3016 12.7783 10.9463 13.0811 11.2812C13.1997 11.5187 13.2999 11.7209 13.3594 11.9004C13.3992 12.0208 13.4042 12.0854 13.4043 12.1133C13.3726 12.1293 13.2986 12.1562 13.1455 12.1699C12.8453 12.1969 12.3568 12.1616 11.5977 12.0098C9.22996 11.5361 7.06273 9.98557 5.25586 8.49023C4.3835 7.76828 3.54044 7.01048 2.88281 6.48438C2.54469 6.21388 2.22287 5.97683 1.92773 5.80566C1.64508 5.64174 1.32344 5.5 1 5.5H0.5V0.5H8.33594Z";
 const MESSAGE_BUBBLE_TAIL_ATTRIBUTE = "data-threadflow-user-bubble-tail";
+const MESSAGE_BUBBLE_TAIL_SPACER_ATTRIBUTE = "data-threadflow-user-bubble-tail-spacer";
+const MESSAGE_TIMESTAMP_ATTRIBUTE = "data-threadflow-user-message-timestamp";
+const MESSAGE_TIMESTAMP_HOST_ATTRIBUTE = "data-threadflow-user-message-timestamp-host";
+const NUDGER_MESSAGE_ATTRIBUTE = "data-threadflow-nudger-message";
 const NATIVE_USER_MESSAGE_SELECTOR = `[data-message-column] > [class~="group/message"][class~="ml-auto"]`;
+const NATIVE_USER_BUBBLE_RELATIVE_SELECTOR = `:scope > [class~="w-fit"][class~="flex-col"] > [class~="bg-surface-recessed"]`;
 const NATIVE_USER_BUBBLE_SELECTOR = `${NATIVE_USER_MESSAGE_SELECTOR} > [class~="w-fit"][class~="flex-col"] > [class~="bg-surface-recessed"]`;
+const NATIVE_STEER_HEADER_SELECTOR = `:scope > [class~="mb-1"][class~="justify-end"]:has(> span[class~="whitespace-nowrap"])`;
 const NATIVE_CHAT_CSS = `
+  [${NUDGER_MESSAGE_ATTRIBUTE}] {
+    display: none !important;
+  }
+
   ${NATIVE_USER_BUBBLE_SELECTOR} {
     position: relative !important;
     border: 0 !important;
     border-radius: 1rem !important;
+    background-color: var(--surface-recessed-solid) !important;
     padding: 0.375rem 0.75rem !important;
   }
 
@@ -94,9 +107,76 @@ const NATIVE_CHAT_CSS = `
     width: 14px;
     height: 13px;
     pointer-events: none;
-    color: var(--surface-recessed);
+    color: var(--surface-recessed-solid);
+  }
+
+  [${MESSAGE_BUBBLE_TAIL_SPACER_ATTRIBUTE}] {
+    margin-bottom: 7px !important;
+  }
+
+  [${MESSAGE_TIMESTAMP_HOST_ATTRIBUTE}] {
+    position: relative !important;
+    margin-bottom: 1rem !important;
+  }
+
+  [${MESSAGE_TIMESTAMP_ATTRIBUTE}] {
+    position: absolute;
+    top: calc(100% + 3px);
+    right: 1.25rem;
+    z-index: 12;
+    white-space: nowrap;
+    pointer-events: none;
+    color: var(--muted-foreground);
+    font-size: 10px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  [${MESSAGE_TIMESTAMP_HOST_ATTRIBUTE}]:hover > [${MESSAGE_TIMESTAMP_ATTRIBUTE}] {
+    opacity: 0.65;
   }
 `;
+
+const nativeUserMessageTimestamps = new Map<string, { threadId: string; createdAt: number }>();
+const nativeUserMessageTimestampRowsByThread = new Map<string, Set<string>>();
+
+function replaceNativeUserMessageTimestamps(threadId: string, messages: readonly UserMessageTimestamp[]): void {
+  const previousRowIds = nativeUserMessageTimestampRowsByThread.get(threadId);
+  if (previousRowIds !== undefined) {
+    for (const rowId of previousRowIds) {
+      if (nativeUserMessageTimestamps.get(rowId)?.threadId === threadId) {
+        nativeUserMessageTimestamps.delete(rowId);
+      }
+    }
+  }
+
+  const nextRowIds = new Set<string>();
+  for (const message of messages) {
+    for (const rowId of message.rowIds) {
+      const existing = nativeUserMessageTimestamps.get(rowId);
+      if (existing === undefined || existing.threadId !== threadId || existing.createdAt <= message.createdAt) {
+        nativeUserMessageTimestamps.set(rowId, { threadId, createdAt: message.createdAt });
+      }
+      nextRowIds.add(rowId);
+    }
+  }
+  nativeUserMessageTimestampRowsByThread.set(threadId, nextRowIds);
+  syncNativeUserMessages();
+}
+
+function clearNativeUserMessageTimestamps(threadId: string): void {
+  const rowIds = nativeUserMessageTimestampRowsByThread.get(threadId);
+  nativeUserMessageTimestampRowsByThread.delete(threadId);
+  if (rowIds !== undefined) {
+    for (const rowId of rowIds) {
+      if (nativeUserMessageTimestamps.get(rowId)?.threadId === threadId) {
+        nativeUserMessageTimestamps.delete(rowId);
+      }
+    }
+  }
+  syncNativeUserMessages();
+}
 
 function createNativeUserBubbleTail(): SVGSVGElement {
   const namespace = "http://www.w3.org/2000/svg";
@@ -116,8 +196,20 @@ function createNativeUserBubbleTail(): SVGSVGElement {
   return tail;
 }
 
-function syncNativeUserBubbleTails(): void {
+function syncNativeUserMessages(): void {
+  const userMessages = Array.from(document.querySelectorAll<HTMLElement>(NATIVE_USER_MESSAGE_SELECTOR));
+  for (const message of userMessages) {
+    const bubble = message.querySelector<HTMLElement>(NATIVE_USER_BUBBLE_RELATIVE_SELECTOR);
+    const isNudgerMessage = message.querySelector(NATIVE_STEER_HEADER_SELECTOR) !== null
+      && bubble !== null
+      && isThreadNudgerMessageText(bubble.textContent ?? "");
+    if (isNudgerMessage) message.setAttribute(NUDGER_MESSAGE_ATTRIBUTE, "");
+    else message.removeAttribute(NUDGER_MESSAGE_ATTRIBUTE);
+  }
+
   const desiredBubbles = new Set<HTMLElement>();
+  const bottomBubbles = new Set<HTMLElement>();
+  const desiredTimestampHosts = new Map<HTMLElement, number>();
   const rowSelector = [
     ":scope > [data-timeline-row-id]",
     ":scope > [data-timeline-virtual-spacer] > [data-timeline-row-id]",
@@ -127,12 +219,24 @@ function syncNativeUserBubbleTails(): void {
   for (const list of timelineLists) {
     const rows = Array.from(list.querySelectorAll<HTMLElement>(rowSelector));
     for (const [index, row] of rows.entries()) {
-      if (row.querySelector(NATIVE_USER_MESSAGE_SELECTOR) === null) continue;
+      const userMessage = row.querySelector<HTMLElement>(NATIVE_USER_MESSAGE_SELECTOR);
+      if (userMessage === null || userMessage.hasAttribute(NUDGER_MESSAGE_ATTRIBUTE)) continue;
       const nextRow = rows[index + 1];
-      if (nextRow !== undefined && nextRow.querySelector(NATIVE_USER_MESSAGE_SELECTOR) !== null) continue;
+      const nextUserMessage = nextRow?.querySelector<HTMLElement>(NATIVE_USER_MESSAGE_SELECTOR);
+      if (nextUserMessage != null && !nextUserMessage.hasAttribute(NUDGER_MESSAGE_ATTRIBUTE)) continue;
 
       const bubble = row.querySelector<HTMLElement>(NATIVE_USER_BUBBLE_SELECTOR);
-      if (bubble !== null) desiredBubbles.add(bubble);
+      if (bubble !== null) {
+        desiredBubbles.add(bubble);
+        if (index === rows.length - 1) bottomBubbles.add(bubble);
+      }
+
+      const timestampRow = userMessage.closest<HTMLElement>("[data-timeline-row-id]");
+      const timestampRowId = timestampRow?.dataset.timelineRowId;
+      const timestamp = timestampRowId === undefined
+        ? undefined
+        : nativeUserMessageTimestamps.get(timestampRowId);
+      if (timestamp !== undefined) desiredTimestampHosts.set(userMessage, timestamp.createdAt);
     }
   }
 
@@ -149,6 +253,35 @@ function syncNativeUserBubbleTails(): void {
       bubble.append(createNativeUserBubbleTail());
     }
   }
+
+  const existingSpacers = Array.from(
+    document.querySelectorAll<HTMLElement>(`[${MESSAGE_BUBBLE_TAIL_SPACER_ATTRIBUTE}]`),
+  );
+  for (const bubble of existingSpacers) {
+    if (!bottomBubbles.has(bubble)) bubble.removeAttribute(MESSAGE_BUBBLE_TAIL_SPACER_ATTRIBUTE);
+  }
+  for (const bubble of bottomBubbles) bubble.setAttribute(MESSAGE_BUBBLE_TAIL_SPACER_ATTRIBUTE, "");
+
+  const existingTimestampHosts = Array.from(
+    document.querySelectorAll<HTMLElement>(`[${MESSAGE_TIMESTAMP_HOST_ATTRIBUTE}]`),
+  );
+  for (const host of existingTimestampHosts) {
+    if (desiredTimestampHosts.has(host)) continue;
+    host.removeAttribute(MESSAGE_TIMESTAMP_HOST_ATTRIBUTE);
+    host.querySelector(`:scope > [${MESSAGE_TIMESTAMP_ATTRIBUTE}]`)?.remove();
+  }
+  for (const [host, createdAt] of desiredTimestampHosts) {
+    host.setAttribute(MESSAGE_TIMESTAMP_HOST_ATTRIBUTE, "");
+    let timestamp = host.querySelector<HTMLTimeElement>(`:scope > [${MESSAGE_TIMESTAMP_ATTRIBUTE}]`);
+    if (timestamp === null) {
+      timestamp = document.createElement("time");
+      timestamp.setAttribute(MESSAGE_TIMESTAMP_ATTRIBUTE, "");
+      host.append(timestamp);
+    }
+    const date = new Date(createdAt);
+    timestamp.dateTime = date.toISOString();
+    timestamp.textContent = formatUserMessageTimestamp(createdAt);
+  }
 }
 
 const NATIVE_COMPOSER_CSS = `
@@ -157,7 +290,7 @@ const NATIVE_COMPOSER_CSS = `
     pointer-events: none !important;
   }
 
-  html[data-custom-sidebar-composer-scope="new-thread"] :has(> [data-app-composer-role="primary"]) {
+  html[data-threadflow-composer-scope="new-thread"] :has(> [data-app-composer-role="primary"]) {
     min-height: 100%;
     justify-content: flex-end;
     padding-top: 1rem !important;
@@ -239,12 +372,12 @@ const INSTANT_SIDEBAR_CSS = `
 type KeyboardFocusMode = "sidebar" | "chat";
 
 function getKeyboardFocusMode(): KeyboardFocusMode {
-  return document.documentElement.dataset.customSidebarFocusMode === "sidebar" ? "sidebar" : "chat";
+  return document.documentElement.dataset.threadflowFocusMode === "sidebar" ? "sidebar" : "chat";
 }
 
 function setKeyboardFocusMode(mode: KeyboardFocusMode) {
   if (getKeyboardFocusMode() === mode) return;
-  document.documentElement.dataset.customSidebarFocusMode = mode;
+  document.documentElement.dataset.threadflowFocusMode = mode;
   window.dispatchEvent(new CustomEvent<KeyboardFocusMode>(KEYBOARD_FOCUS_MODE_EVENT, { detail: mode }));
 }
 
@@ -603,7 +736,7 @@ function NativeChatSummary({ threadId }: { threadId: string }) {
   useEffect(() => {
     if (summary?.dismissed !== false || followUps.length === 0) return;
     const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    if (activeElement !== null && activeElement.closest("[data-custom-sidebar-row]") !== null) return;
+    if (activeElement !== null && activeElement.closest("[data-threadflow-row]") !== null) return;
     const frame = window.requestAnimationFrame(() => followUpButtonsRef.current[0]?.focus({ preventScroll: true }));
     return () => window.cancelAnimationFrame(frame);
   }, [followUps.length, summary?.dismissed, summary?.sourceUpdatedAt]);
@@ -624,7 +757,7 @@ function NativeChatSummary({ threadId }: { threadId: string }) {
       ) : null}
       {summary?.dismissed === false ? (
         <div
-          data-bb-plugin="custom-sidebar"
+          data-bb-plugin="threadflow"
           className="relative z-30 rounded-xl border border-border bg-background p-4 text-foreground shadow-lg"
           aria-label="Chat summary"
           onKeyDown={(event) => {
@@ -656,9 +789,19 @@ function NativeChatSummary({ threadId }: { threadId: string }) {
                 <path d="m4 4 8 8m0-8-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
               </svg>
             </button>
-            <div className="rounded-lg bg-muted/40 py-2 pl-3 pr-8" aria-label="Your message">
-              <div className="max-h-24 overflow-y-auto">
-                <Markdown content={summary.lastUserMessage} className="text-sm font-normal leading-relaxed text-foreground [&_code]:!text-[1em]" />
+            <div className="flex justify-end pt-3" aria-label="Your message">
+              <div className="relative max-w-[70%] rounded-2xl bg-[var(--surface-recessed-solid)] px-3 py-1.5">
+                <div className="max-h-24 overflow-y-auto">
+                  <Markdown content={summary.lastUserMessage} className="text-sm font-normal leading-relaxed text-foreground [&_code]:!text-[1em]" />
+                </div>
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 14 13"
+                  fill="none"
+                  className="pointer-events-none absolute -bottom-[7px] right-1 z-10 h-[13px] w-[14px] text-[var(--surface-recessed-solid)]"
+                >
+                  <path d={MESSAGE_BUBBLE_TAIL_PATH} fill="currentColor" stroke="currentColor" />
+                </svg>
               </div>
             </div>
             <div className="max-h-32 overflow-y-auto pr-6">
@@ -794,7 +937,7 @@ function PromptAutocomplete() {
   return (
     <div
       ref={anchorRef}
-      data-bb-plugin="custom-sidebar"
+      data-bb-plugin="threadflow"
       className="relative h-0 w-full max-w-full min-w-0"
     >
       {suggestion === null ? null : (
@@ -813,14 +956,53 @@ function PromptAutocomplete() {
 
 function NewThreadComposerBridge() {
   useEffect(() => {
-    document.documentElement.dataset.customSidebarComposerScope = "new-thread";
+    document.documentElement.dataset.threadflowComposerScope = "new-thread";
     return () => {
-      if (document.documentElement.dataset.customSidebarComposerScope === "new-thread") {
-        delete document.documentElement.dataset.customSidebarComposerScope;
+      if (document.documentElement.dataset.threadflowComposerScope === "new-thread") {
+        delete document.documentElement.dataset.threadflowComposerScope;
       }
     };
   }, []);
   return <PromptAutocomplete />;
+}
+
+function NativeUserMessageTimestampBridge({ threadId }: { threadId: string }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const refresh = useCallback(async () => {
+    try {
+      const result = await rpc.call("user_message_timestamps", { threadId });
+      replaceNativeUserMessageTimestamps(threadId, result.messages);
+    } catch {
+      // Keep the last successful mapping through transient host or plugin reloads.
+    }
+  }, [rpc, threadId]);
+
+  useEffect(() => {
+    void refresh();
+    return () => clearNativeUserMessageTimestamps(threadId);
+  }, [refresh, threadId]);
+  useEffect(() => {
+    let timer: number | null = null;
+    const observer = new MutationObserver((records) => {
+      const addedUserMessage = records.some((record) => Array.from(record.addedNodes).some((node) =>
+        node instanceof Element
+        && (node.matches(NATIVE_USER_MESSAGE_SELECTOR) || node.querySelector(NATIVE_USER_MESSAGE_SELECTOR) !== null)
+      ));
+      if (!addedUserMessage) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        timer = null;
+        void refresh();
+      }, 50);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [refresh]);
+  useRealtime(THREADS_CHANGED_CHANNEL, () => void refresh());
+  return null;
 }
 
 function ThreadComposerBridge({ threadId, scopeKind }: {
@@ -893,6 +1075,7 @@ function ThreadComposerBridge({ threadId, scopeKind }: {
   }, [context.threadId, runThreadCommand, scopeKind, threadId]);
   return (
     <div ref={bridgeRef}>
+      <NativeUserMessageTimestampBridge threadId={threadId} />
       <PromptAutocomplete />
       <NativeChatSummary threadId={threadId} />
     </div>
@@ -1067,7 +1250,7 @@ function SidebarThreadRow({
       {...splitProps}
       role="button"
       tabIndex={0}
-      data-custom-sidebar-row
+      data-threadflow-row
       data-sidebar-thread-shortcut-target=""
       data-sidebar-thread-id={thread.id}
       data-thread-id={thread.id}
@@ -1114,7 +1297,7 @@ function SidebarThreadRow({
               key={sideChat.id}
               role="button"
               tabIndex={0}
-              data-custom-sidebar-row
+              data-threadflow-row
               data-thread-id={sideChat.id}
               data-side-chat-id={sideChat.id}
               data-source-thread-id={sideChat.sourceThreadId}
@@ -1425,7 +1608,7 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
   );
 
   const focusSidebarRow = useCallback((threadId: string | null) => {
-    const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-custom-sidebar-row]") ?? []);
+    const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>("[data-threadflow-row]") ?? []);
     const row = rows.find((candidate) => candidate.dataset.threadId === threadId) ?? rows[0];
     setKeyboardFocusMode("sidebar");
     row?.focus({ preventScroll: true });
@@ -1537,10 +1720,10 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
     const navigateSidebar = (direction: -1 | 1) => {
       const list = listRef.current;
       if (list === null) return false;
-      const rows = Array.from(list.querySelectorAll<HTMLElement>("[data-custom-sidebar-row]"));
+      const rows = Array.from(list.querySelectorAll<HTMLElement>("[data-threadflow-row]"));
       if (rows.length === 0) return false;
       const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const current = activeElement?.closest<HTMLElement>("[data-custom-sidebar-row]")
+      const current = activeElement?.closest<HTMLElement>("[data-threadflow-row]")
         ?? rows.find((row) => row.dataset.threadId === selectedThreadId)
         ?? rows[0];
       const index = Math.max(0, rows.indexOf(current));
@@ -1653,7 +1836,7 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
           !isTyping
           && event.key.length === 1
           && selectedThreadId !== null
-          && document.documentElement.dataset.customSidebarComposerScope !== "new-thread"
+          && document.documentElement.dataset.threadflowComposerScope !== "new-thread"
         ) {
           event.preventDefault();
           event.stopImmediatePropagation();
@@ -1664,9 +1847,9 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
         return;
       }
 
-      const rows = Array.from(list.querySelectorAll<HTMLElement>("[data-custom-sidebar-row]"));
+      const rows = Array.from(list.querySelectorAll<HTMLElement>("[data-threadflow-row]"));
       if (rows.length === 0) return;
-      const current = target?.closest<HTMLElement>("[data-custom-sidebar-row]")
+      const current = target?.closest<HTMLElement>("[data-threadflow-row]")
         ?? rows.find((row) => row.dataset.threadId === selectedThreadId)
         ?? rows[0];
 
@@ -1802,7 +1985,7 @@ export default definePluginApp((app) => {
         if (disposed || frame !== null) return;
         frame = window.requestAnimationFrame(() => {
           frame = null;
-          syncNativeUserBubbleTails();
+          syncNativeUserMessages();
         });
       };
       const observer = new MutationObserver(() => scheduleTailSync());
@@ -1815,6 +1998,16 @@ export default definePluginApp((app) => {
         observer.disconnect();
         if (frame !== null) window.cancelAnimationFrame(frame);
         document.querySelectorAll(`[${MESSAGE_BUBBLE_TAIL_ATTRIBUTE}]`).forEach((tail) => tail.remove());
+        document.querySelectorAll(`[${MESSAGE_BUBBLE_TAIL_SPACER_ATTRIBUTE}]`).forEach((bubble) => {
+          bubble.removeAttribute(MESSAGE_BUBBLE_TAIL_SPACER_ATTRIBUTE);
+        });
+        document.querySelectorAll(`[${MESSAGE_TIMESTAMP_ATTRIBUTE}]`).forEach((timestamp) => timestamp.remove());
+        document.querySelectorAll(`[${MESSAGE_TIMESTAMP_HOST_ATTRIBUTE}]`).forEach((host) => {
+          host.removeAttribute(MESSAGE_TIMESTAMP_HOST_ATTRIBUTE);
+        });
+        document.querySelectorAll(`[${NUDGER_MESSAGE_ATTRIBUTE}]`).forEach((message) => {
+          message.removeAttribute(NUDGER_MESSAGE_ATTRIBUTE);
+        });
         style.remove();
       };
       signal.addEventListener("abort", cleanup, { once: true });

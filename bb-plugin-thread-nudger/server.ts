@@ -15,6 +15,15 @@ type ThreadNudgeState = {
 
 type NudgerState = Record<string, ThreadNudgeState>;
 
+export function createThreadNudgeInput(message: string) {
+  return {
+    type: "text" as const,
+    text: message,
+    mentions: [],
+    visibility: "agent-only" as const,
+  };
+}
+
 function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(done, ms);
@@ -90,7 +99,7 @@ export default function plugin(bb: BbPluginApi) {
               await bb.sdk.threads.send({
                 threadId: thread.id,
                 mode: "steer",
-                input: [{ type: "text", text: milestone.message, mentions: [] }],
+                input: [createThreadNudgeInput(milestone.message)],
               });
               bb.log.info(`Nudged ${thread.id}: ${milestone.message}`);
             } catch (cause) {

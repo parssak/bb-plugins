@@ -1,9 +1,23 @@
+import { spawn } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 
+import {
+  advanceCompletionAlertState,
+  getCompletionAlertSnapshot,
+  initialCompletionAlertState,
+  isCompletionThreadRelevant,
+  type CompletionAlertMode,
+} from "./completion-alert.ts";
+import {
+  isThreadNudgerMessageText,
+  isThreadNudgerUserMessage,
+} from "./thread-nudger-message.ts";
+import { collectUserMessageTimestamps } from "./user-message-timestamp.ts";
 import { registerThreadflowWaits } from "./wait-service.ts";
 
 const scopeSchema = z.enum(["recent", "all"]);
+const USER_MESSAGE_TIMESTAMP_PAGE_LIMIT = 25;
 const sideChatSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -89,6 +103,15 @@ export const rpcContract = defineRpcContract({
   prompt_history: {
     input: z.object({}).strict(),
     output: z.object({ prompts: z.array(z.string().min(1).max(4_000)).max(100) }).strict(),
+  },
+  user_message_timestamps: {
+    input: z.object({ threadId: z.string().min(1).max(100) }).strict(),
+    output: z.object({
+      messages: z.array(z.object({
+        rowIds: z.array(z.string().min(1)).min(1),
+        createdAt: z.number(),
+      }).strict()),
+    }).strict(),
   },
   create_side_chat: {
     input: z.object({
@@ -191,6 +214,18 @@ const HANDOFF_PROMPT = [
   "Return only the handoff message in one fenced code block, with no text outside it.",
 ].join(" ");
 const MAX_HANDOFF_CHARS = 8_000;
+const COMPLETION_ALERT_SETTLE_MS = 2_000;
+const COMPLETION_CHIME_PATH = "/System/Library/Sounds/Glass.aiff";
+
+function playCompletionAlert(mode: Exclude<CompletionAlertMode, "Off">, bb: BbPluginApi): void {
+  const child = mode === "Voice"
+    ? spawn("/usr/bin/say", ["All threads are ready."], { detached: true, stdio: "ignore" })
+    : spawn("/usr/bin/afplay", [COMPLETION_CHIME_PATH], { detached: true, stdio: "ignore" });
+  child.once("error", (cause) => {
+    bb.log.warn(`Could not play completion alert: ${cause.message}`);
+  });
+  child.unref();
+}
 
 function excludeFromDisplayedDiff(path: string): boolean {
   const filename = path.split("/").at(-1);
@@ -248,12 +283,25 @@ function parseGeneratedSummary(output: string): z.infer<typeof generatedSummaryS
 
 export default function plugin(bb: BbPluginApi) {
   registerThreadflowWaits(bb, { excludedThreadTitlePrefixes: [SUMMARY_WORKER_TITLE_PREFIX] });
+  const settings = bb.settings.define({
+    completionAlert: {
+      type: "select",
+      label: "All work finished alert",
+      options: ["Off", "Chime", "Voice"],
+      default: "Chime",
+    },
+  });
   const viewingThreads = new Map<string, string>();
   const summariesInFlight = new Set<string>();
   const pendingSummaryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const reviewFollowUpsInFlight = new Set<string>();
   const handoffsInFlight = new Set<string>();
   const automaticReviewsInFlight = new Set<string>();
+  let completionAlertState = initialCompletionAlertState;
+  const completionAlertReadyThreadIds = new Set<string>();
+  let completionAlertTimer: ReturnType<typeof setTimeout> | null = null;
+  let completionAlertMonitorRunning = false;
+  let completionAlertChecks = Promise.resolve();
   const publishThreadsChanged = () => bb.realtime.publish(THREADS_CHANGED_CHANNEL, null);
   const publishSummaryChanged = (threadId: string) => bb.realtime.publish(SUMMARIES_CHANGED_CHANNEL, { threadId });
   const publishHandoffChanged = (threadId: string, status: "sent" | "failed", message?: string) => {
@@ -265,6 +313,73 @@ export default function plugin(bb: BbPluginApi) {
     clearTimeout(timer);
     pendingSummaryTimers.delete(threadId);
   };
+  const checkCompletionAlert = async () => {
+    try {
+      const [visibleThreads, hiddenForks] = await Promise.all([
+        bb.sdk.threads.list({ archived: false, includeHidden: false, limit: MAX_THREADS_PER_STATE }),
+        bb.sdk.threads.list({
+          archived: false,
+          includeHidden: true,
+          originKind: "fork",
+          limit: MAX_THREADS_PER_STATE,
+        }),
+      ]);
+      const snapshot = getCompletionAlertSnapshot(visibleThreads, hiddenForks);
+      const result = advanceCompletionAlertState(completionAlertState, {
+        ...snapshot,
+        hasAttention: snapshot.hasAttention || completionAlertReadyThreadIds.size > 0,
+      });
+      if (!completionAlertMonitorRunning) return;
+      completionAlertState = result.state;
+      if (!snapshot.hasRunningWork) completionAlertReadyThreadIds.clear();
+      if (!result.shouldAlert) return;
+
+      const { completionAlert } = await settings.get();
+      if (
+        completionAlertMonitorRunning
+        && (completionAlert === "Chime" || completionAlert === "Voice")
+      ) {
+        playCompletionAlert(completionAlert, bb);
+      }
+    } catch (cause) {
+      bb.log.warn(`Could not check completion alert state: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  };
+  const enqueueCompletionAlertCheck = () => {
+    completionAlertChecks = completionAlertChecks.then(checkCompletionAlert, checkCompletionAlert);
+    return completionAlertChecks;
+  };
+  const scheduleCompletionAlertCheck = () => {
+    if (!completionAlertMonitorRunning) return;
+    if (completionAlertTimer !== null) clearTimeout(completionAlertTimer);
+    completionAlertTimer = setTimeout(() => {
+      completionAlertTimer = null;
+      void enqueueCompletionAlertCheck();
+    }, COMPLETION_ALERT_SETTLE_MS);
+    completionAlertTimer.unref?.();
+  };
+  const armCompletionAlertFor = (thread: Parameters<typeof isCompletionThreadRelevant>[0]) => {
+    if (!isCompletionThreadRelevant(thread)) return;
+    completionAlertState = { initialized: true, armed: true };
+  };
+  const markCompletionAlertReady = (
+    thread: Parameters<typeof isCompletionThreadRelevant>[0] & { id: string },
+  ) => {
+    if (isCompletionThreadRelevant(thread)) completionAlertReadyThreadIds.add(thread.id);
+  };
+  bb.background.service("completion-alert-monitor", {
+    async start(signal) {
+      completionAlertMonitorRunning = true;
+      await enqueueCompletionAlertCheck();
+      if (!signal.aborted) {
+        await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+      }
+      completionAlertMonitorRunning = false;
+      if (completionAlertTimer !== null) clearTimeout(completionAlertTimer);
+      completionAlertTimer = null;
+      await completionAlertChecks;
+    },
+  });
   bb.onDispose(() => {
     for (const timer of pendingSummaryTimers.values()) clearTimeout(timer);
     pendingSummaryTimers.clear();
@@ -334,6 +449,22 @@ export default function plugin(bb: BbPluginApi) {
     if (existing === undefined || existing.sourceUpdatedAt === sourceUpdatedAt) return;
     await bb.storage.kv.delete(summaryKey(threadId));
     publishSummaryChanged(threadId);
+  };
+  const getDisplayableSummary = async (threadId: string) => {
+    const summary = await bb.storage.kv.get<ChatSummary>(summaryKey(threadId));
+    if (summary === undefined || !isThreadNudgerMessageText(summary.lastUserMessage)) return summary;
+    try {
+      const timeline = await bb.sdk.threads.timeline({ threadId, segmentLimit: "12" });
+      const lastUserMessage = timeline.rows
+        .filter((row) => row.kind === "conversation" && row.role === "user")
+        .at(-1);
+      if (lastUserMessage === undefined || !isThreadNudgerUserMessage(lastUserMessage)) return summary;
+    } catch {
+      return summary;
+    }
+    await bb.storage.kv.delete(summaryKey(threadId));
+    publishSummaryChanged(threadId);
+    return undefined;
   };
   const advanceReviewChat = async (threadId: string) => {
     if (reviewFollowUpsInFlight.has(threadId)) return;
@@ -432,7 +563,7 @@ export default function plugin(bb: BbPluginApi) {
         || !force && (thread.status !== "idle" || [...viewingThreads.values()].includes(threadId))
       ) return false;
 
-      const existing = await bb.storage.kv.get<ChatSummary>(summaryKey(threadId));
+      const existing = await getDisplayableSummary(threadId);
       if (existing?.sourceUpdatedAt === thread.updatedAt) {
         if (force && existing.dismissed) {
           await bb.storage.kv.set(summaryKey(threadId), { ...existing, dismissed: false } satisfies ChatSummary);
@@ -443,8 +574,10 @@ export default function plugin(bb: BbPluginApi) {
 
       const timeline = await bb.sdk.threads.timeline({ threadId, segmentLimit: "12" });
       const conversation = timeline.rows
-        .filter((row) => row.kind === "conversation" && (row.role === "user" || row.role === "assistant"))
-        .map((row) => ({ role: row.role, text: row.text.trim() }))
+        .flatMap((row) => {
+          if (row.kind !== "conversation" || row.role === "user" && isThreadNudgerUserMessage(row)) return [];
+          return [{ role: row.role, text: row.text.trim() }];
+        })
         .filter((message) => message.text !== "");
       const lastUserMessage = conversation
         .filter((message) => message.role === "user")
@@ -577,6 +710,8 @@ export default function plugin(bb: BbPluginApi) {
   bb.events.on("thread.created", publishThreadsChanged);
   bb.events.on("thread.active", ({ thread }) => {
     publishThreadsChanged();
+    armCompletionAlertFor(thread);
+    scheduleCompletionAlertCheck();
     if (thread.title?.startsWith(SUMMARY_WORKER_TITLE_PREFIX) === true) return;
     cancelPendingSummary(thread.id);
     void clearSummary(thread.id).catch((cause) => {
@@ -585,6 +720,8 @@ export default function plugin(bb: BbPluginApi) {
   });
   bb.events.on("thread.idle", ({ thread, lastAssistantText }) => {
     publishThreadsChanged();
+    markCompletionAlertReady(thread);
+    scheduleCompletionAlertCheck();
     void finishPendingHandoff(thread.id, lastAssistantText).catch((cause) => {
       bb.log.warn(`Could not inspect handoff response ${thread.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
@@ -631,6 +768,8 @@ export default function plugin(bb: BbPluginApi) {
   });
   bb.events.on("thread.failed", ({ thread, error }) => {
     publishThreadsChanged();
+    markCompletionAlertReady(thread);
+    scheduleCompletionAlertCheck();
     void failPendingHandoff(
       thread.id,
       error?.trim() || "The side chat failed before producing a handoff.",
@@ -640,17 +779,26 @@ export default function plugin(bb: BbPluginApi) {
   });
   bb.events.on("thread.archived", ({ thread }) => {
     cancelPendingSummary(thread.id);
+    completionAlertReadyThreadIds.delete(thread.id);
     publishThreadsChanged();
+    scheduleCompletionAlertCheck();
     void failPendingHandoff(thread.id, "The side chat was archived before producing a handoff.").catch((cause) => {
       bb.log.warn(`Could not clear archived handoff ${thread.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
   });
   bb.events.on("thread.deleted", ({ thread }) => {
     cancelPendingSummary(thread.id);
+    completionAlertReadyThreadIds.delete(thread.id);
     publishThreadsChanged();
+    scheduleCompletionAlertCheck();
     void failPendingHandoff(thread.id, "The side chat was deleted before producing a handoff.").catch((cause) => {
       bb.log.warn(`Could not clear deleted handoff ${thread.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
+  });
+  bb.events.on("interaction.pending", ({ thread }) => {
+    publishThreadsChanged();
+    markCompletionAlertReady(thread);
+    scheduleCompletionAlertCheck();
   });
 
   const archiveSourceThread = async (threadId: string) => {
@@ -850,8 +998,11 @@ export default function plugin(bb: BbPluginApi) {
       for (const timeline of timelines) {
         if (timeline === null) continue;
         const userMessages = timeline.rows
-          .filter((row) => row.kind === "conversation" && row.role === "user")
-          .map((row) => row.text.trim().slice(0, 4_000))
+          .flatMap((row) => row.kind === "conversation"
+            && row.role === "user"
+            && !isThreadNudgerUserMessage(row)
+            ? [row.text.trim().slice(0, 4_000)]
+            : [])
           .filter((text) => text !== "")
           .reverse();
         for (const prompt of userMessages) {
@@ -863,6 +1014,25 @@ export default function plugin(bb: BbPluginApi) {
         }
       }
       return { prompts };
+    },
+    user_message_timestamps: async ({ threadId }) => {
+      const rows: Parameters<typeof collectUserMessageTimestamps>[0][number][] = [];
+      let olderCursor: { anchorId: string; anchorSeq: number } | null = null;
+      for (let pageIndex = 0; pageIndex < USER_MESSAGE_TIMESTAMP_PAGE_LIMIT; pageIndex += 1) {
+        const timeline = await bb.sdk.threads.timeline({
+          threadId,
+          includeNestedRows: "true",
+          segmentLimit: "100",
+          ...(olderCursor === null ? {} : {
+            beforeAnchorId: olderCursor.anchorId,
+            beforeAnchorSeq: String(olderCursor.anchorSeq),
+          }),
+        });
+        rows.push(...timeline.rows);
+        olderCursor = timeline.timelinePage.olderCursor;
+        if (!timeline.timelinePage.hasOlderRows || olderCursor === null) break;
+      }
+      return { messages: collectUserMessageTimestamps(rows) };
     },
     create_side_chat: createSideChat,
     create_automatic_review: async ({ sourceThreadId }) => {
@@ -970,11 +1140,11 @@ export default function plugin(bb: BbPluginApi) {
       };
     },
     chat_summary: async ({ threadId }) => {
-      const summary = await bb.storage.kv.get<ChatSummary>(summaryKey(threadId));
+      const summary = await getDisplayableSummary(threadId);
       return { summary: summary ?? null };
     },
     set_chat_summary_dismissed: async ({ threadId, dismissed }) => {
-      const summary = await bb.storage.kv.get<ChatSummary>(summaryKey(threadId));
+      const summary = await getDisplayableSummary(threadId);
       if (summary !== undefined) {
         await bb.storage.kv.set(summaryKey(threadId), { ...summary, dismissed } satisfies ChatSummary);
         publishSummaryChanged(threadId);
@@ -983,7 +1153,7 @@ export default function plugin(bb: BbPluginApi) {
     },
     toggle_chat_summary: async ({ threadId }) => {
       cancelPendingSummary(threadId);
-      const existing = await bb.storage.kv.get<ChatSummary>(summaryKey(threadId));
+      const existing = await getDisplayableSummary(threadId);
       if (existing !== undefined) {
         const dismissed = !existing.dismissed;
         await bb.storage.kv.set(summaryKey(threadId), { ...existing, dismissed } satisfies ChatSummary);

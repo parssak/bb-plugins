@@ -16,6 +16,11 @@ keep the native composer usable and offer up to three terse follow-up actions.
 Native steer labels and action buttons below user messages are hidden.
 User bubbles use compact borderless padding and the Bogi tail only on the last
 message in each consecutive user-message run.
+Thread Nudger check-ins stay in the agent's working context but are omitted from
+completed chat history, prompt suggestions, and the user message shown in TLDR.
+When running work settles to zero and an unread thread still needs attention,
+Threadflow plays one configurable macOS completion alert instead of repeating it
+for every finished thread.
 When a new pull request appears, its review side chat starts automatically in the
 background.
 

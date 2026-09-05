@@ -5,7 +5,7 @@ import { useBrowserDimmingModal } from "./hooks/useBrowserDimmingModal";
 const SWITCH_WINDOW_MS = 2 * 60_000;
 const SWITCH_THRESHOLD = 16;
 const DISMISS_COOLDOWN_MS = 15 * 60_000;
-const WORKOUT_SCRATCHPAD_KEY = "custom-sidebar:workout-scratchpad";
+const WORKOUT_SCRATCHPAD_KEY = "threadflow:workout-scratchpad";
 const CALM_VIDEO_URLS = [
   "https://upload.wikimedia.org/wikipedia/commons/transcoded/2/29/Sunny_waves_at_Cattle_Point_%2840789227201%29.webm/Sunny_waves_at_Cattle_Point_%2840789227201%29.webm.480p.vp9.webm",
   "https://upload.wikimedia.org/wikipedia/commons/transcoded/7/7d/DJI_0147_Soothing_South_Coast_Waves.webm/DJI_0147_Soothing_South_Coast_Waves.webm.480p.vp9.webm",
@@ -79,7 +79,7 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
   if (visibleSwitchCount === null) return null;
   return createPortal(
     <div
-      data-bb-plugin="custom-sidebar"
+      data-bb-plugin="threadflow"
       role="dialog"
       aria-modal="true"
       aria-labelledby="context-switch-guard-title"
