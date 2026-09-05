@@ -88,6 +88,7 @@ const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 const REVIEW_WORKTREE_PROMPT = "Review the changes in this worktree";
 const ASK_LINUS_PROMPT = "how would linus torvalds feel about this";
 const USAGE_SAMPLES_STORAGE_KEY = "threadflow:codex-usage-samples:v1";
+const WAITING_COLLAPSED_STORAGE_KEY = "threadflow:waiting-collapsed:v1";
 const BB_LOGO_DATA_URL = "data:image/webp;base64,"
   + "UklGRqwDAABXRUJQVlA4TKADAAAvL8ALEJUGQbbN66+9nCEiJmANn1izbSRJUf5Rt3OzR/9vHz1TBKMAYJQc7pJB+0CbNVkBnhTY"
   + "E9cW64CDI7eNHImeueWwrn2DbEmyTdt6t7m5ONexbdu2bfuca9u2bdu2bdvWwlxx/8A6EhAU+T/aBPSfgdtGirzHDJ19RFm6oGDg4"
@@ -2138,6 +2139,13 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(activeThreadId);
   const [pullRequests, setPullRequests] = useState<Record<string, PluginSidebarPullRequest | null>>({});
   const [error, setError] = useState<string | null>(null);
+  const [waitingCollapsed, setWaitingCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem(WAITING_COLLAPSED_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
   const listRef = useRef<HTMLDivElement>(null);
   const keepSidebarFocusRef = useRef(false);
   const sideChatPanelTimersRef = useRef<Set<number>>(new Set());
@@ -2145,6 +2153,18 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
   const startedReviewKeysRef = useRef(new Set<string>());
   const reviewsInFlightRef = useRef(new Set<string>());
   const runThreadCommand = useThreadCommand(selectedThreadId);
+
+  const toggleWaitingCollapsed = useCallback(() => {
+    setWaitingCollapsed((collapsed) => {
+      const next = !collapsed;
+      try {
+        window.localStorage.setItem(WAITING_COLLAPSED_STORAGE_KEY, String(next));
+      } catch {
+        // The in-memory state still works when browser storage is unavailable.
+      }
+      return next;
+    });
+  }, []);
 
   const clearSideChatPanelTimers = useCallback(() => {
     for (const timer of sideChatPanelTimersRef.current) window.clearTimeout(timer);
@@ -2509,11 +2529,30 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
         <div className="space-y-3">
           {groups.map(([title, groupThreads]) => groupThreads.length === 0 ? null : (
             <section key={title} className={title === "Working" || title === "Waiting" ? "opacity-50" : undefined}>
-              <div className="flex items-center justify-between px-2 pb-1 text-[10px] font-normal uppercase tracking-wide text-muted-foreground">
-                <span>{title}</span>
-                <span>{groupThreads.length}</span>
-              </div>
-              <div className="space-y-0.5">
+              {title === "Waiting" ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-sm px-2 pb-1 text-[10px] font-normal uppercase tracking-wide text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+                  aria-expanded={!waitingCollapsed}
+                  onClick={toggleWaitingCollapsed}
+                >
+                  <span className="flex items-center gap-1">
+                    <HugeiconsIcon
+                      icon={ArrowRight01Icon}
+                      className={`size-3 transition-transform ${waitingCollapsed ? "" : "rotate-90"}`}
+                      aria-hidden
+                    />
+                    <span>{title}</span>
+                  </span>
+                  <span>{groupThreads.length}</span>
+                </button>
+              ) : (
+                <div className="flex items-center justify-between px-2 pb-1 text-[10px] font-normal uppercase tracking-wide text-muted-foreground">
+                  <span>{title}</span>
+                  <span>{groupThreads.length}</span>
+                </div>
+              )}
+              {title === "Waiting" && waitingCollapsed ? null : <div className="space-y-0.5">
                 {groupThreads.map((thread) => (
                   <SidebarThreadRow
                     key={thread.id}
@@ -2529,7 +2568,7 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
                     showWorkingDuration={title === "Working"}
                   />
                 ))}
-              </div>
+              </div>}
             </section>
           ))}
         </div>
