@@ -5,7 +5,12 @@ import StarterKit from "@tiptap/starter-kit";
 
 export function journalMarkdownExtensions() {
   return [
-    StarterKit,
+    StarterKit.configure({
+      link: {
+        openOnClick: false,
+        protocols: ["threadflow"],
+      },
+    }),
     TaskList,
     TaskItem.configure({ nested: true }),
     Placeholder.configure({ placeholder: "What are you trying to achieve today?" }),

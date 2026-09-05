@@ -1,12 +1,19 @@
 import { useEffect, useRef } from "react";
 import { Editor } from "@tiptap/core";
 import { journalMarkdownExtensions } from "./journal-markdown";
+import {
+  parseThreadReferenceDrag,
+  parseThreadReferenceHref,
+  THREAD_REFERENCE_DRAG_TYPE,
+  threadReferenceHref,
+} from "./thread-reference";
 
 type JournalMarkdownEditorProps = {
   initialMarkdown: string;
   ariaLabel: string;
   onBlur: () => void;
   onMarkdownChange: (markdown: string) => void;
+  onOpenThread: (threadId: string) => void;
 };
 
 export function JournalMarkdownEditor({
@@ -14,14 +21,17 @@ export function JournalMarkdownEditor({
   ariaLabel,
   onBlur,
   onMarkdownChange,
+  onOpenThread,
 }: JournalMarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const initialMarkdownRef = useRef(initialMarkdown);
   const ariaLabelRef = useRef(ariaLabel);
   const onBlurRef = useRef(onBlur);
   const onMarkdownChangeRef = useRef(onMarkdownChange);
+  const onOpenThreadRef = useRef(onOpenThread);
   onBlurRef.current = onBlur;
   onMarkdownChangeRef.current = onMarkdownChange;
+  onOpenThreadRef.current = onOpenThread;
 
   useEffect(() => {
     if (hostRef.current === null) return;
@@ -42,6 +52,43 @@ export function JournalMarkdownEditor({
             onBlurRef.current();
             return false;
           },
+          dragover: (_view, event) => {
+            if (!Array.from(event.dataTransfer?.types ?? []).includes(THREAD_REFERENCE_DRAG_TYPE)) return false;
+            event.preventDefault();
+            if (event.dataTransfer !== null) event.dataTransfer.dropEffect = "copy";
+            return true;
+          },
+        },
+        handleClick: (_view, _position, event) => {
+          const element = event.target instanceof Element ? event.target : null;
+          const anchor = element?.closest<HTMLAnchorElement>("a[href]");
+          const threadId = anchor === null || anchor === undefined
+            ? null
+            : parseThreadReferenceHref(anchor.getAttribute("href") ?? "");
+          if (threadId === null) return false;
+          event.preventDefault();
+          onOpenThreadRef.current(threadId);
+          return true;
+        },
+        handleDrop: (view, event) => {
+          const reference = parseThreadReferenceDrag(
+            event.dataTransfer?.getData(THREAD_REFERENCE_DRAG_TYPE) ?? "",
+          );
+          const position = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+          const link = view.state.schema.marks.link;
+          if (reference === null || position === undefined || link === undefined) return false;
+          try {
+            const transaction = view.state.tr.insert(
+              position,
+              view.state.schema.text(reference.title, [link.create({ href: threadReferenceHref(reference.id) })]),
+            );
+            event.preventDefault();
+            view.dispatch(transaction.scrollIntoView());
+            view.focus();
+            return true;
+          } catch {
+            return false;
+          }
         },
       },
       onUpdate: ({ editor: nextEditor }) => {

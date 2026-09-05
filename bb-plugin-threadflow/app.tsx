@@ -60,6 +60,11 @@ import {
   localJournalDateKey,
   shiftJournalDateKey,
 } from "./journal-date";
+import {
+  serializeThreadReferenceDrag,
+  THREAD_REFERENCE_DRAG_TYPE,
+  threadReferenceMarkdown,
+} from "./thread-reference";
 
 type ChatTarget = {
   id: string;
@@ -362,6 +367,23 @@ const JOURNAL_EDITOR_CSS = `
     text-decoration-color: color-mix(in oklab, currentColor 35%, transparent);
   }
   .threadflow-journal-editor .tiptap a:hover { text-decoration-color: currentColor; }
+  .threadflow-journal-editor .tiptap a[href^="threadflow://thread/"] {
+    display: inline-flex;
+    max-width: 100%;
+    align-items: center;
+    border: 1px solid color-mix(in oklab, var(--warning) 42%, var(--border));
+    border-radius: 0.45rem;
+    background: color-mix(in oklab, var(--warning) 10%, transparent);
+    padding: 0 0.4em;
+    color: var(--foreground);
+    font-weight: 500;
+    line-height: 1.45;
+    text-decoration: none;
+    vertical-align: baseline;
+  }
+  .threadflow-journal-editor .tiptap a[href^="threadflow://thread/"]:hover {
+    background: color-mix(in oklab, var(--warning) 17%, transparent);
+  }
   .threadflow-journal-editor .tiptap hr { margin-top: 2em; border: 0; border-top: 1px solid var(--border); }
 
   .threadflow-journal-editor .tiptap p.is-editor-empty:first-child::before {
@@ -928,7 +950,7 @@ function NativeThreadHeader({ threadId, isCompactViewport }: PluginThreadHeaderA
         <ChatAccentHeader target={target} compact />
       </div>
       {titleHost === null || brandedTitle === null || brandedTitle.brand === null ? null : createPortal(
-        <span {...{ [THREAD_HEADER_TITLE_CONTENT_ATTRIBUTE]: "" }}>
+        <span data-bb-plugin="threadflow" {...{ [THREAD_HEADER_TITLE_CONTENT_ATTRIBUTE]: "" }}>
           <ThreadBrandMark brand={brandedTitle.brand} className="size-[0.85em]" />
           <span className="min-w-0 truncate">{brandedTitle.title}</span>
         </span>,
@@ -1486,6 +1508,17 @@ function ThreadTitleContent({ title }: { title: string }) {
   );
 }
 
+function setThreadReferenceDragData(dataTransfer: DataTransfer, threadId: string, title: string): void {
+  const brandedTitle = parseThreadTitleBrand(title);
+  const reference = {
+    id: threadId,
+    title: brandedTitle.title.trim() || title.trim() || "Untitled thread",
+  };
+  dataTransfer.effectAllowed = "copy";
+  dataTransfer.setData(THREAD_REFERENCE_DRAG_TYPE, serializeThreadReferenceDrag(reference));
+  dataTransfer.setData("text/plain", threadReferenceMarkdown(reference));
+}
+
 function SidebarThreadRow({
   thread,
   backgroundCommands,
@@ -1564,7 +1597,14 @@ function SidebarThreadRow({
         <kbd className="shrink-0 font-mono text-[9px] text-muted-foreground">{shortcutNumber}</kbd>
         <BackgroundCommandIndicator count={backgroundCommands} />
         <span
-          className="flex min-w-0 flex-1 items-center gap-1 text-xs font-normal text-foreground"
+          draggable
+          title="Drag into Journal"
+          className="flex min-w-0 flex-1 cursor-grab select-none items-center gap-1 text-xs font-normal text-foreground active:cursor-grabbing"
+          onPointerDown={(event) => event.stopPropagation()}
+          onDragStart={(event) => {
+            event.stopPropagation();
+            setThreadReferenceDragData(event.dataTransfer, thread.id, thread.title);
+          }}
           onDoubleClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
@@ -1605,7 +1645,16 @@ function SidebarThreadRow({
                 ? "flex w-full items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-left text-[10px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
                 : "flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-left text-[10px] text-muted-foreground outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"}
             >
-              <span className="flex min-w-0 flex-1 items-center gap-1">
+              <span
+                draggable
+                title="Drag into Journal"
+                className="flex min-w-0 flex-1 cursor-grab select-none items-center gap-1 active:cursor-grabbing"
+                onPointerDown={(event) => event.stopPropagation()}
+                onDragStart={(event) => {
+                  event.stopPropagation();
+                  setThreadReferenceDragData(event.dataTransfer, sideChat.id, sideChat.title);
+                }}
+              >
                 <ThreadTitleContent title={sideChat.title} />
               </span>
               <button
@@ -1824,6 +1873,7 @@ function JournalHeader({ subPath }: PluginNavPanelProps) {
 
 function JournalDay({ dateKey }: { dateKey: string }) {
   const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
   const [content, setContent] = useState("");
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -1922,6 +1972,7 @@ function JournalDay({ dateKey }: { dateKey: string }) {
           setContent(nextContent);
         }}
         onBlur={() => void flush()}
+        onOpenThread={(threadId) => navigate.toThread(threadId)}
       />
       {saveError ? (
         <span role="status" className="mt-2 shrink-0 text-right text-xs text-destructive">

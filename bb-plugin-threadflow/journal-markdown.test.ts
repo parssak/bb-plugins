@@ -3,6 +3,7 @@ import test from "node:test";
 import { Editor } from "@tiptap/core";
 
 import { journalMarkdownExtensions } from "./journal-markdown.ts";
+import { threadReferenceHref } from "./thread-reference.ts";
 
 test("round-trips task lists and ordinary markdown lists", () => {
   const markdown = "- [ ] Plan the day\n- [x] Clear the inbox\n\n- First priority\n- Second priority";
@@ -30,5 +31,19 @@ test("serializes nested lists with two-space indentation", () => {
   });
 
   assert.equal(editor.getMarkdown(), markdown);
+  editor.destroy();
+});
+
+test("round-trips clickable thread references", () => {
+  const markdown = `[Fix the header](${threadReferenceHref("thr_abc-123")})`;
+  const editor = new Editor({
+    element: null,
+    extensions: journalMarkdownExtensions(),
+    content: markdown,
+    contentType: "markdown",
+  });
+
+  assert.equal(editor.getMarkdown(), markdown);
+  assert.equal(editor.getJSON().content?.[0]?.content?.[0]?.marks?.[0]?.type, "link");
   editor.destroy();
 });
