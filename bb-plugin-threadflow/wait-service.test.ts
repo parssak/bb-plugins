@@ -310,6 +310,63 @@ test("threads_idle waits for every target and wakes from idle events", async () 
   await state.harness.lifecycle.dispose();
 });
 
+test("threads_idle rejects an already failed target without arming a wait", async () => {
+  const state = createWaitHost();
+  state.setThreadStatus(state.targetThread.id, "error");
+
+  const result = await state.harness.behavior.callAgentTool(
+    "threadflow_wait",
+    {
+      condition: { kind: "threads_idle", threadIds: [state.targetThread.id] },
+      timeoutMinutes: 60,
+      resumePrompt: "Continue after the dependency finishes.",
+    },
+    { threadId: state.sleepingThread.id },
+  );
+
+  assert.match(String(result), /cannot be satisfied.*Dependency.*error/);
+  assert.equal(state.harness.inspection.sdk.callsTo("threads.send").length, 0);
+  assert.equal(await state.waitController.getActiveWait(state.sleepingThread.id), null);
+  await state.harness.lifecycle.dispose();
+});
+
+test("threads_idle wakes with failure evidence when a target fails", async () => {
+  const state = createWaitHost();
+  state.setThreadStatus(state.targetThread.id, "active");
+  await state.harness.behavior.callAgentTool(
+    "threadflow_wait",
+    {
+      condition: {
+        kind: "threads_idle",
+        threadIds: [state.targetThread.id, state.secondTargetThread.id],
+      },
+      timeoutMinutes: 60,
+      resumePrompt: "Continue after both dependencies finish.",
+    },
+    { threadId: state.sleepingThread.id },
+  );
+
+  state.setThreadStatus(state.targetThread.id, "idle");
+  await state.harness.behavior.emitThreadEvent("thread.idle", {
+    thread: { ...state.targetThread, status: "idle" },
+    lastAssistantText: null,
+  });
+  state.setThreadStatus(state.secondTargetThread.id, "error");
+  await state.harness.behavior.emitThreadEvent("thread.failed", {
+    thread: { ...state.secondTargetThread, status: "error" },
+    error: "Dependency failed",
+  });
+
+  assert.equal(state.harness.inspection.recheckCount, 1);
+  assert.match(state.queuedRows[0].content[0].text, /cannot complete.*Second dependency.*error/);
+  assert.match(state.queuedRows[0].content[1].text, /condition_impossible/);
+  assert.match(state.queuedRows[0].content[1].text, /Second dependency.*error/);
+  const hook = state.harness.inspection.registrations.hooks["message.dispatch"];
+  assert.ok(hook);
+  assert.equal((await hook(dispatchContext(state.sleepingThread, state.queuedRows[0]))).action, "proceed");
+  await state.harness.lifecycle.dispose();
+});
+
 test("manual dispatch completes a wait and permits another wait", async () => {
   const state = createWaitHost();
   const input = {

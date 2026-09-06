@@ -200,6 +200,9 @@ type ArmWaitResult = {
   outcome: "already_satisfied";
   detail: string;
 } | {
+  outcome: "condition_impossible";
+  detail: string;
+} | {
   outcome: "already_waiting";
   waitId: string;
   deadlineAt: number;
@@ -210,11 +213,31 @@ interface ResolvedConditionResult {
   condition: ResolvedCondition;
   label: string;
   alreadySatisfied: string | null;
+  alreadyImpossible?: string;
   initialEvidence?: string;
 }
 
 function threadTitle(thread: { title: string | null; titleFallback: string | null }): string {
   return thread.title?.trim() || thread.titleFallback?.trim() || "Untitled";
+}
+
+function classifyIdleTargets(
+  threads: readonly { status: string }[],
+  targets: readonly { title: string }[],
+): { failed: string[]; pending: string[] } {
+  const failed: string[] = [];
+  const pending: string[] = [];
+  threads.forEach((thread, index) => {
+    if (thread.status === "idle") return;
+    const description = `“${targets[index]!.title}” (${thread.status})`;
+    if (thread.status === "error") failed.push(description);
+    else pending.push(description);
+  });
+  return { failed, pending };
+}
+
+function failedIdleTargetDetail(failed: readonly string[]): string {
+  return `${failed.length === 1 ? "The target thread" : "Target threads"} ${failed.join(", ")} failed before becoming idle.`;
 }
 
 function waitMarkerBlock(marker: WaitMarker) {
@@ -280,6 +303,9 @@ function waitForMonitorTick(signal: AbortSignal): Promise<void> {
 function formatToolResult(result: ArmWaitResult): string {
   if (result.outcome === "already_satisfied") {
     return `The wait condition is already satisfied: ${result.detail}\nContinue this turn.`;
+  }
+  if (result.outcome === "condition_impossible") {
+    return `The wait condition cannot be satisfied: ${result.detail}\nContinue this turn and reassess the dependency.`;
   }
   if (result.outcome === "already_waiting") {
     return `This thread is already sleeping on wait ${result.waitId}: ${result.label}. Deadline: ${new Date(result.deadlineAt).toISOString()}.\nEnd this turn now.`;
@@ -382,16 +408,16 @@ export function registerThreadflowWaits(
       }
       const threads = await Promise.all(condition.threadIds.map((threadId) => bb.sdk.threads.get({ threadId })));
       const targets = threads.map((thread) => ({ threadId: thread.id, title: threadTitle(thread) }));
-      const pending = threads.flatMap((thread, index) => thread.status === "idle"
-        ? []
-        : [`“${targets[index]!.title}” (${thread.status})`]);
+      const { failed, pending } = classifyIdleTargets(threads, targets);
       return {
         condition: { kind: condition.kind, targets },
         label: `Waiting for ${targets.length} ${targets.length === 1 ? "thread" : "threads"} to become idle`,
+        alreadyImpossible: failed.length === 0 ? undefined : failedIdleTargetDetail(failed),
         alreadySatisfied: pending.length === 0
+          && failed.length === 0
           ? `${targets.length === 1 ? `“${targets[0]!.title}” is` : `All ${targets.length} threads are`} already idle.`
           : null,
-        initialEvidence: `Still running: ${pending.join(", ")}.`,
+        initialEvidence: pending.length === 0 ? undefined : `Still running: ${pending.join(", ")}.`,
       };
     }
 
@@ -515,7 +541,9 @@ export function registerThreadflowWaits(
 
     const visibleText = wait.result.outcome === "condition_met" || wait.result.outcome === "resumed_manually"
       ? wait.resumePrompt
-      : "The Threadflow wait ended without satisfying its condition. Reassess the blocker before continuing.";
+      : wait.result.outcome === "condition_impossible"
+        ? `The Threadflow wait cannot complete: ${wait.result.detail} Reassess the dependency before continuing.`
+        : "The Threadflow wait ended without satisfying its condition. Reassess the blocker before continuing.";
     await bb.sdk.threads.queuedMessages.update({
       threadId: wait.threadId,
       queuedMessageId: queued.id,
@@ -570,6 +598,9 @@ export function registerThreadflowWaits(
     }
 
     const resolved = await resolveCondition(sleepingThreadId, conditionInput);
+    if (resolved.alreadyImpossible !== undefined) {
+      return { outcome: "condition_impossible", detail: resolved.alreadyImpossible };
+    }
     if (resolved.alreadySatisfied !== null) {
       return { outcome: "already_satisfied", detail: resolved.alreadySatisfied };
     }
@@ -650,9 +681,15 @@ export function registerThreadflowWaits(
         const threads = await Promise.all(wait.condition.targets.map((target) => (
           bb.sdk.threads.get({ threadId: target.threadId })
         )));
-        const pending = threads.flatMap((thread, index) => thread.status === "idle"
-          ? []
-          : [`“${wait.condition.targets[index]!.title}” (${thread.status})`]);
+        const { failed, pending } = classifyIdleTargets(threads, wait.condition.targets);
+        if (failed.length > 0) {
+          await releaseWait(wait.id, {
+            outcome: "condition_impossible",
+            observedAt: Date.now(),
+            detail: failedIdleTargetDetail(failed),
+          });
+          return;
+        }
         if (pending.length === 0) {
           await releaseWait(wait.id, {
             outcome: "condition_met",
