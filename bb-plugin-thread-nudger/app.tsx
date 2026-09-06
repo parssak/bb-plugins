@@ -18,7 +18,9 @@ type NudgingChanged = {
 function isNudgingChanged(value: unknown): value is NudgingChanged {
   if (typeof value !== "object" || value === null) return false;
   const event = value as Record<string, unknown>;
-  return typeof event.threadId === "string" && typeof event.enabled === "boolean";
+  return (
+    typeof event.threadId === "string" && typeof event.enabled === "boolean"
+  );
 }
 
 export function ThreadNudgerToggle() {
@@ -33,27 +35,38 @@ export function ThreadNudgerToggle() {
   const [footerSlot, setFooterSlot] = useState<HTMLSpanElement | null>(null);
 
   useLayoutEffect(() => {
-    if (!anchor || !threadId || !view.run.isRunning || view.layout === "compact") {
+    if (!anchor || !threadId || !view.run.isRunning) {
       setFooterSlot(null);
       return;
     }
 
-    const composer = anchor.closest("[data-follow-up-composer]");
-    const footer = composer?.querySelector("[data-follow-up-composer-footer]");
-    const controls = footer?.lastElementChild;
+    const composer = anchor.closest("[data-app-composer]");
+    const controls =
+      view.layout === "compact"
+        ? composer?.querySelector(
+            "[data-promptbox-compact] [data-promptbox-standard-actions]",
+          )
+        : composer?.querySelector("[data-follow-up-composer-footer]")
+            ?.lastElementChild;
     if (!(controls instanceof HTMLElement)) {
       setFooterSlot(null);
       return;
     }
 
-    const contextControl = Array.from(controls.children).find(
-      (child) =>
-        child.matches('[aria-label^="Context window"]') ||
-        child.querySelector('[aria-label^="Context window"]'),
-    );
+    const nextControl =
+      view.layout === "compact"
+        ? controls.querySelector("[data-promptbox-submit-group]")
+        : Array.from(controls.children).find(
+            (child) =>
+              child.matches('[aria-label^="Context window"]') ||
+              child.querySelector('[aria-label^="Context window"]'),
+          );
     const slot = document.createElement("span");
     slot.className = "thread-nudger-footer-slot";
-    controls.insertBefore(slot, contextControl ?? null);
+    if (view.layout === "compact") {
+      slot.dataset.layout = "compact";
+    }
+    controls.insertBefore(slot, nextControl ?? null);
     setFooterSlot(slot);
 
     return () => {
@@ -62,7 +75,8 @@ export function ThreadNudgerToggle() {
   }, [anchor, threadId, view.layout, view.run.isRunning]);
 
   useEffect(() => {
-    if (!threadId || !view.run.isRunning || connectionState !== "connected") return;
+    if (!threadId || !view.run.isRunning || connectionState !== "connected")
+      return;
     let cancelled = false;
     setEnabled(null);
     setFailed(false);
@@ -143,10 +157,22 @@ export function ThreadNudgerToggle() {
   );
 }
 
+function CompactThreadNudgerToggle() {
+  const view = useComposerView();
+  return view.layout === "compact" ? <ThreadNudgerToggle /> : null;
+}
+
 export default definePluginApp((app) => {
   app.composer.customize({
     id: "thread-nudger-toggle",
     scopes: ["thread"],
     actions: [{ id: "toggle", component: ThreadNudgerToggle }],
+    banners: [
+      {
+        id: "compact-toggle",
+        chrome: "bare",
+        component: CompactThreadNudgerToggle,
+      },
+    ],
   });
 });
