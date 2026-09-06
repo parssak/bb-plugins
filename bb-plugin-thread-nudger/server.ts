@@ -1,4 +1,5 @@
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { z } from "zod";
 
 const POLL_INTERVAL_MS = 30_000;
 const NUDGE_MILESTONES = [
@@ -6,7 +7,9 @@ const NUDGE_MILESTONES = [
   { afterMs: 22 * 60_000, message: "status update? don't stop if you're not done" },
   { afterMs: 52 * 60_000, message: "you've been going for a while, everything ok?" },
 ] as const;
-const STATE_KEY = "nudge-milestones-v1";
+const LEGACY_STATE_KEY = "nudge-milestones-v1";
+const STATE_KEY = "thread-nudger-state-v2";
+const NUDGING_CHANGED_CHANNEL = "nudging-changed";
 
 type ThreadNudgeState = {
   activeSince: number;
@@ -14,6 +17,24 @@ type ThreadNudgeState = {
 };
 
 type NudgerState = Record<string, ThreadNudgeState>;
+
+type PersistedState = {
+  threads: NudgerState;
+  disabledThreads: Record<string, true>;
+};
+
+const threadIdSchema = z.string().min(1).max(128);
+
+export const rpcContract = defineRpcContract({
+  getThreadNudging: {
+    input: z.object({ threadId: threadIdSchema }).strict(),
+    output: z.object({ enabled: z.boolean() }).strict(),
+  },
+  setThreadNudging: {
+    input: z.object({ threadId: threadIdSchema, enabled: z.boolean() }).strict(),
+    output: z.object({ enabled: z.boolean() }).strict(),
+  },
+});
 
 export function createThreadNudgeInput(message: string) {
   return {
@@ -50,11 +71,66 @@ function parseState(value: unknown): NudgerState {
   );
 }
 
-export default function plugin(bb: BbPluginApi) {
+function parseDisabledThreads(value: unknown): Record<string, true> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value).filter((entry): entry is [string, true] => entry[1] === true),
+  );
+}
+
+function parsePersistedState(value: unknown): PersistedState | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const state = value as Record<string, unknown>;
+  return {
+    threads: parseState(state.threads),
+    disabledThreads: parseDisabledThreads(state.disabledThreads),
+  };
+}
+
+export default async function plugin(bb: BbPluginApi) {
+  const storedState = parsePersistedState(await bb.storage.kv.get<unknown>(STATE_KEY));
+  const state: PersistedState = storedState ?? {
+    threads: parseState(await bb.storage.kv.get<unknown>(LEGACY_STATE_KEY)),
+    disabledThreads: {},
+  };
+
+  const persistState = () => bb.storage.kv.set(STATE_KEY, state);
+
+  bb.rpc.register(rpcContract, {
+    getThreadNudging({ threadId }) {
+      return { enabled: state.disabledThreads[threadId] !== true };
+    },
+    async setThreadNudging({ threadId, enabled }) {
+      const wasEnabled = state.disabledThreads[threadId] !== true;
+      if (enabled === wasEnabled) return { enabled };
+
+      if (enabled) {
+        delete state.disabledThreads[threadId];
+        state.threads[threadId] = {
+          activeSince: Date.now(),
+          nextMilestoneIndex: 0,
+        };
+      } else {
+        state.disabledThreads[threadId] = true;
+        delete state.threads[threadId];
+      }
+      await persistState();
+      bb.realtime.publish(NUDGING_CHANGED_CHANNEL, { threadId, enabled });
+      return { enabled };
+    },
+  });
+
+  bb.events.on("thread.deleted", async ({ thread }) => {
+    const hadState = state.threads[thread.id] !== undefined
+      || state.disabledThreads[thread.id] !== undefined;
+    if (!hadState) return;
+    delete state.threads[thread.id];
+    delete state.disabledThreads[thread.id];
+    await persistState();
+  });
+
   bb.background.service("watch-active-threads", {
     async start(signal) {
-      let state = parseState(await bb.storage.kv.get<unknown>(STATE_KEY));
-
       while (!signal.aborted) {
         try {
           const now = Date.now();
@@ -67,19 +143,20 @@ export default function plugin(bb: BbPluginApi) {
           const activeIds = new Set(activeThreads.map((thread) => thread.id));
           let changed = false;
 
-          for (const threadId of Object.keys(state)) {
-            if (activeIds.has(threadId)) continue;
-            delete state[threadId];
+          for (const threadId of Object.keys(state.threads)) {
+            if (activeIds.has(threadId) && state.disabledThreads[threadId] !== true) continue;
+            delete state.threads[threadId];
             changed = true;
           }
 
           for (const thread of activeThreads) {
-            const threadState = state[thread.id] ?? {
+            if (state.disabledThreads[thread.id] === true) continue;
+            const threadState = state.threads[thread.id] ?? {
               activeSince: Math.min(now, thread.updatedAt),
               nextMilestoneIndex: 0,
             };
-            if (state[thread.id] === undefined) {
-              state[thread.id] = threadState;
+            if (state.threads[thread.id] === undefined) {
+              state.threads[thread.id] = threadState;
               changed = true;
             }
             const elapsedMs = now - threadState.activeSince;
@@ -107,7 +184,7 @@ export default function plugin(bb: BbPluginApi) {
             }
           }
 
-          if (changed) await bb.storage.kv.set(STATE_KEY, state);
+          if (changed) await persistState();
         } catch (cause) {
           bb.log.warn(`Thread sweep failed: ${cause instanceof Error ? cause.message : String(cause)}`);
         }

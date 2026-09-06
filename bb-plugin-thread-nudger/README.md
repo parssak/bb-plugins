@@ -13,3 +13,7 @@ as user-authored messages in completed chat history.
 Milestone state persists across plugin reloads and is discarded when a thread
 is no longer active. A nudge never rearms the schedule, and an overdue sweep
 skips directly to the latest due milestone instead of sending a catch-up burst.
+
+While a thread is running, its composer shows a bell toggle for opting that
+thread out. Turning nudging back on restarts the milestone clock from that
+moment.
