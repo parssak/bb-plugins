@@ -20,30 +20,6 @@ function isNudgingChanged(value: unknown): value is NudgingChanged {
   return typeof event.threadId === "string" && typeof event.enabled === "boolean";
 }
 
-function BellIcon({ enabled }: { enabled: boolean }) {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
-      <path
-        d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"
-        fill="none"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
-      />
-      {!enabled && (
-        <path
-          d="m4 4 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeWidth="2"
-        />
-      )}
-    </svg>
-  );
-}
-
 export function ThreadNudgerToggle() {
   const rpc = useRpc<typeof rpcContract>();
   const view = useComposerView();
@@ -111,7 +87,7 @@ export function ThreadNudgerToggle() {
   return (
     <button
       aria-label={title}
-      aria-pressed={enabled ?? false}
+      aria-pressed={enabled ?? undefined}
       className="thread-nudger-toggle"
       data-enabled={enabled === true ? "true" : "false"}
       disabled={enabled === null || saving || failed}
@@ -119,7 +95,9 @@ export function ThreadNudgerToggle() {
       title={title}
       type="button"
     >
-      <BellIcon enabled={enabled !== false} />
+      <span aria-hidden="true" className="thread-nudger-switch-track">
+        <span className="thread-nudger-switch-thumb" />
+      </span>
     </button>
   );
 }

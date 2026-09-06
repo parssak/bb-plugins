@@ -1,29 +1,58 @@
 .thread-nudger-toggle {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: 0.5rem;
   background: transparent;
-  color: var(--muted-foreground);
   cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
+  transition: opacity 120ms ease;
 }
 
-.thread-nudger-toggle[data-enabled="true"] {
-  color: var(--foreground);
-  background: color-mix(in srgb, currentColor 10%, transparent);
+.thread-nudger-switch-track {
+  display: flex;
+  width: 26px;
+  height: 16px;
+  box-sizing: border-box;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid color-mix(in oklch, var(--ink) 24%, var(--canvas));
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--ink) 10%, var(--canvas));
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
-.thread-nudger-toggle:hover:not(:disabled) {
-  background: color-mix(in srgb, currentColor 16%, transparent);
+.thread-nudger-switch-thumb {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--ink);
+  transform: translateX(0);
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+.thread-nudger-toggle[data-enabled="true"] .thread-nudger-switch-track {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.thread-nudger-toggle[data-enabled="true"] .thread-nudger-switch-thumb {
+  background: var(--canvas);
+  transform: translateX(10px);
+}
+
+.thread-nudger-toggle:hover:not(:disabled) .thread-nudger-switch-track {
+  border-color: var(--ink);
 }
 
 .thread-nudger-toggle:focus-visible {
-  outline: 2px solid currentColor;
+  outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
 
