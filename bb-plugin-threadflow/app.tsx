@@ -2384,18 +2384,6 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
         event.metaKey
         && !event.ctrlKey
         && !event.altKey
-        && !event.shiftKey
-        && (event.key === "ArrowUp" || event.key === "ArrowDown")
-      ) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        navigateSidebar(event.key === "ArrowUp" ? -1 : 1);
-        return;
-      }
-      if (
-        event.metaKey
-        && !event.ctrlKey
-        && !event.altKey
         && event.shiftKey
         && ["e", "l", "a"].includes(commandKey)
         && listRef.current?.contains(document.activeElement)
@@ -2600,7 +2588,6 @@ export default definePluginApp((app) => {
           [aria-label="report a bug" i]
         ) { display: none !important; }
 
-        [data-testid="app-desktop-sidebar-trigger"],
         [data-sidebar="sidebar"] :is(button, [role="button"]):is(
           [aria-label="go back" i],
           [aria-label="go forward" i]
