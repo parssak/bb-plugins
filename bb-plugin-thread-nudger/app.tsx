@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   definePluginApp,
   useComposerView,
@@ -28,6 +29,37 @@ export function ThreadNudgerToggle() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
+  const [footerSlot, setFooterSlot] = useState<HTMLSpanElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!anchor || !threadId || !view.run.isRunning || view.layout === "compact") {
+      setFooterSlot(null);
+      return;
+    }
+
+    const composer = anchor.closest("[data-follow-up-composer]");
+    const footer = composer?.querySelector("[data-follow-up-composer-footer]");
+    const controls = footer?.lastElementChild;
+    if (!(controls instanceof HTMLElement)) {
+      setFooterSlot(null);
+      return;
+    }
+
+    const contextControl = Array.from(controls.children).find(
+      (child) =>
+        child.matches('[aria-label^="Context window"]') ||
+        child.querySelector('[aria-label^="Context window"]'),
+    );
+    const slot = document.createElement("span");
+    slot.className = "thread-nudger-footer-slot";
+    controls.insertBefore(slot, contextControl ?? null);
+    setFooterSlot(slot);
+
+    return () => {
+      slot.remove();
+    };
+  }, [anchor, threadId, view.layout, view.run.isRunning]);
 
   useEffect(() => {
     if (!threadId || !view.run.isRunning || connectionState !== "connected") return;
@@ -85,20 +117,29 @@ export function ThreadNudgerToggle() {
   }
 
   return (
-    <button
-      aria-label={title}
-      aria-pressed={enabled ?? undefined}
-      className="thread-nudger-toggle"
-      data-enabled={enabled === true ? "true" : "false"}
-      disabled={enabled === null || saving || failed}
-      onClick={() => void toggle()}
-      title={title}
-      type="button"
-    >
-      <span aria-hidden="true" className="thread-nudger-switch-track">
-        <span className="thread-nudger-switch-thumb" />
-      </span>
-    </button>
+    <>
+      <span ref={setAnchor} className="thread-nudger-anchor" />
+      {footerSlot
+        ? createPortal(
+            <button
+              aria-checked={enabled ?? undefined}
+              aria-label={title}
+              className="thread-nudger-toggle"
+              data-enabled={enabled === true ? "true" : "false"}
+              disabled={enabled === null || saving || failed}
+              onClick={() => void toggle()}
+              role="switch"
+              title={title}
+              type="button"
+            >
+              <span aria-hidden="true" className="thread-nudger-switch-track">
+                <span className="thread-nudger-switch-thumb" />
+              </span>
+            </button>,
+            footerSlot,
+          )
+        : null}
+    </>
   );
 }
 

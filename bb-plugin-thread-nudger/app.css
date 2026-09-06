@@ -1,8 +1,19 @@
+.thread-nudger-anchor {
+  display: none;
+}
+
+.thread-nudger-footer-slot {
+  display: inline-flex;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
 .thread-nudger-toggle {
   display: inline-flex;
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
+  width: 28px;
+  min-width: 28px;
+  height: 24px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
@@ -16,39 +27,34 @@
 
 .thread-nudger-switch-track {
   display: flex;
-  width: 26px;
+  width: 28px;
   height: 16px;
   box-sizing: border-box;
   align-items: center;
   padding: 2px;
-  border: 1px solid color-mix(in oklch, var(--ink) 24%, var(--canvas));
+  border: 0;
   border-radius: 999px;
-  background: color-mix(in oklch, var(--ink) 10%, var(--canvas));
-  transition: background-color 120ms ease, border-color 120ms ease;
+  background: color-mix(in oklch, var(--ink) 18%, var(--canvas));
+  transition: background-color 120ms ease;
 }
 
 .thread-nudger-switch-thumb {
   display: block;
-  width: 10px;
-  height: 10px;
+  width: 12px;
+  height: 12px;
   border-radius: 999px;
-  background: var(--ink);
+  background: var(--muted-foreground);
   transform: translateX(0);
   transition: background-color 120ms ease, transform 120ms ease;
 }
 
 .thread-nudger-toggle[data-enabled="true"] .thread-nudger-switch-track {
-  border-color: var(--accent);
-  background: var(--accent);
+  background: color-mix(in oklch, var(--success) 22%, var(--canvas));
 }
 
 .thread-nudger-toggle[data-enabled="true"] .thread-nudger-switch-thumb {
-  background: var(--canvas);
-  transform: translateX(10px);
-}
-
-.thread-nudger-toggle:hover:not(:disabled) .thread-nudger-switch-track {
-  border-color: var(--ink);
+  background: var(--success);
+  transform: translateX(12px);
 }
 
 .thread-nudger-toggle:focus-visible {
