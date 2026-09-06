@@ -14,7 +14,20 @@ type JournalMarkdownEditorProps = {
   onBlur: () => void;
   onMarkdownChange: (markdown: string) => void;
   onOpenThread: (threadId: string) => void;
+  threadStatuses: Readonly<Record<string, "archived" | "in-progress">>;
 };
+
+function applyThreadStatuses(
+  root: HTMLElement,
+  statuses: JournalMarkdownEditorProps["threadStatuses"],
+): void {
+  for (const anchor of root.querySelectorAll<HTMLAnchorElement>('a[href^="threadflow://thread/"]')) {
+    const threadId = parseThreadReferenceHref(anchor.getAttribute("href") ?? "");
+    const status = threadId === null ? undefined : statuses[threadId];
+    if (status === undefined) delete anchor.dataset.threadflowThreadStatus;
+    else anchor.dataset.threadflowThreadStatus = status;
+  }
+}
 
 export function JournalMarkdownEditor({
   initialMarkdown,
@@ -22,6 +35,7 @@ export function JournalMarkdownEditor({
   onBlur,
   onMarkdownChange,
   onOpenThread,
+  threadStatuses,
 }: JournalMarkdownEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const initialMarkdownRef = useRef(initialMarkdown);
@@ -29,9 +43,15 @@ export function JournalMarkdownEditor({
   const onBlurRef = useRef(onBlur);
   const onMarkdownChangeRef = useRef(onMarkdownChange);
   const onOpenThreadRef = useRef(onOpenThread);
+  const threadStatusesRef = useRef(threadStatuses);
   onBlurRef.current = onBlur;
   onMarkdownChangeRef.current = onMarkdownChange;
   onOpenThreadRef.current = onOpenThread;
+  threadStatusesRef.current = threadStatuses;
+
+  useEffect(() => {
+    if (hostRef.current !== null) applyThreadStatuses(hostRef.current, threadStatuses);
+  }, [threadStatuses]);
 
   useEffect(() => {
     if (hostRef.current === null) return;
@@ -93,8 +113,10 @@ export function JournalMarkdownEditor({
       },
       onUpdate: ({ editor: nextEditor }) => {
         onMarkdownChangeRef.current(nextEditor.getMarkdown());
+        if (hostRef.current !== null) applyThreadStatuses(hostRef.current, threadStatusesRef.current);
       },
     });
+    applyThreadStatuses(hostRef.current, threadStatusesRef.current);
     return () => editor.destroy();
   }, []);
 

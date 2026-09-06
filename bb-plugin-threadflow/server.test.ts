@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeQueueEntry, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
 import plugin from "./server.ts";
 
 test("thread list RPC preserves BB's aggregate queued-work state", async () => {
+  const sendAt = Date.now() + 3 * 60 * 60 * 1_000;
   const scheduledThread = {
     ...makeThreadResponse({
       createdAt: Date.now(),
@@ -24,6 +25,13 @@ test("thread list RPC preserves BB's aggregate queued-work state", async () => {
         list: async ({ archived, includeHidden }) => (
           archived === false && includeHidden === false ? [scheduledThread] : []
         ),
+        queue: {
+          list: async () => [makeQueueEntry({
+            threadId: scheduledThread.id,
+            waitingOn: { kind: "time" },
+            sendAt,
+          })],
+        },
       },
       projects: { list: async () => [] },
       providers: { list: async () => [] },
@@ -33,6 +41,45 @@ test("thread list RPC preserves BB's aggregate queued-work state", async () => {
 
   const result = await harness.behavior.callRpc("threads", { scope: "recent", query: "" });
   assert.equal(result.threads[0]?.queuedWork, "waiting");
+  assert.equal(result.threads[0]?.scheduledSendAt, sendAt);
+  await harness.lifecycle.dispose();
+});
+
+test("waiting status exposes a scheduled queued continuation", async () => {
+  const sendAt = Date.now() + 4 * 60 * 60 * 1_000;
+  const thread = makeThreadResponse({ id: "thread-scheduled" });
+  const entry = makeQueueEntry({
+    id: "queue-scheduled",
+    threadId: thread.id,
+    sendAt,
+    waitingOn: { kind: "time" },
+    content: [
+      { type: "text", text: "Merge, wait for deployment, then test production.", mentions: [] },
+      { type: "text", text: "hidden marker", mentions: [], visibility: "agent-only" },
+    ],
+  });
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "threadflow-queue-status-test",
+    sdk: {
+      threads: {
+        get: async () => thread,
+        queuedMessages: { list: async () => [entry] },
+      },
+    },
+  });
+  plugin(bb);
+
+  assert.deepEqual(await harness.behavior.callRpc("active_threadflow_wait", { threadId: thread.id }), {
+    wait: null,
+    queuedWait: {
+      id: entry.id,
+      waitingKind: "time",
+      reason: "This continuation will be sent automatically at the scheduled time.",
+      message: "Merge, wait for deployment, then test production.",
+      sendAt,
+    },
+  });
+
   await harness.lifecycle.dispose();
 });
 
@@ -111,6 +158,67 @@ test("journal entries persist by local date and empty days do not occupy storage
   await assert.rejects(() => reloaded.harness.behavior.callRpc("journal_entry", { dateKey: "2026-02-29" }));
 
   await reloaded.harness.lifecycle.dispose();
+});
+
+test("journal thread statuses distinguish archived and in-progress links", async () => {
+  const archived = makeThreadResponse({ id: "thread-archived", archivedAt: Date.now() });
+  const working = makeThreadResponse({ id: "thread-working", status: "active" });
+  const waiting = makeThreadResponse({ id: "thread-waiting", queuedWork: "waiting" });
+  const needsAttention = makeThreadResponse({
+    id: "thread-needs-attention",
+    hasPendingInteraction: true,
+    queuedWork: "waiting",
+  });
+  const sourceWithWorkingSideChat = makeThreadResponse({ id: "thread-with-side-chat" });
+  const workingSideChat = makeThreadResponse({
+    id: "thread-side-chat",
+    sourceThreadId: sourceWithWorkingSideChat.id,
+    originKind: "fork",
+    status: "active",
+    visibility: "hidden",
+  });
+  const threads = new Map([
+    archived,
+    working,
+    waiting,
+    needsAttention,
+    sourceWithWorkingSideChat,
+  ].map((thread) => [thread.id, thread]));
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "threadflow-journal-status-test",
+    sdk: {
+      threads: {
+        get: async ({ threadId }) => {
+          const thread = threads.get(threadId);
+          if (thread === undefined) throw new Error("Thread not found");
+          return thread;
+        },
+        list: async () => [workingSideChat],
+      },
+    },
+  });
+  plugin(bb);
+
+  assert.deepEqual(await harness.behavior.callRpc("journal_thread_statuses", {
+    threadIds: [
+      archived.id,
+      working.id,
+      waiting.id,
+      needsAttention.id,
+      sourceWithWorkingSideChat.id,
+      "thread-missing",
+      archived.id,
+    ],
+  }), {
+    statuses: [
+      { threadId: archived.id, status: "archived" },
+      { threadId: working.id, status: "in-progress" },
+      { threadId: waiting.id, status: "in-progress" },
+      { threadId: sourceWithWorkingSideChat.id, status: "in-progress" },
+    ],
+  });
+
+  await harness.lifecycle.dispose();
 });
 
 test("usage samples migrate to shared plugin storage and survive reloads", async () => {

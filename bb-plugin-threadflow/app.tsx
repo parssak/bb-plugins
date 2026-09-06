@@ -30,7 +30,8 @@ import type {
   PluginThreadListProps,
   PluginThreadPanelProps,
 } from "@get-bb/plugin-sdk/app";
-import type { NativeSideChat, NativeThread, rpcContract } from "./server";
+import type { NativeSideChat, NativeThread, QueuedThreadWait, rpcContract } from "./server";
+import type { ActiveThreadflowWait } from "./wait-service";
 import { ContextSwitchGuard } from "./context-switch-guard";
 import { toast } from "sonner";
 import { Button } from "./components/ui/button";
@@ -61,6 +62,7 @@ import {
 import {
   serializeThreadReferenceDrag,
   THREAD_REFERENCE_DRAG_TYPE,
+  threadReferenceIds,
   threadReferenceMarkdown,
 } from "./thread-reference";
 
@@ -370,9 +372,9 @@ const JOURNAL_EDITOR_CSS = `
     display: inline-flex;
     max-width: 100%;
     align-items: center;
-    border: 1px solid color-mix(in oklab, var(--warning) 42%, var(--border));
+    border: 1px solid var(--border);
     border-radius: 0.45rem;
-    background: color-mix(in oklab, var(--warning) 10%, transparent);
+    background: var(--muted);
     padding: 0 0.4em;
     color: var(--foreground);
     font-weight: 500;
@@ -381,7 +383,23 @@ const JOURNAL_EDITOR_CSS = `
     vertical-align: baseline;
   }
   .threadflow-journal-editor .tiptap a[href^="threadflow://thread/"]:hover {
+    background: color-mix(in oklab, var(--muted-foreground) 16%, var(--muted));
+  }
+  .threadflow-journal-editor .tiptap a[data-threadflow-thread-status="in-progress"] {
+    border-color: color-mix(in oklab, var(--warning) 42%, var(--border));
+    background: color-mix(in oklab, var(--warning) 10%, transparent);
+    color: var(--warning);
+  }
+  .threadflow-journal-editor .tiptap a[data-threadflow-thread-status="in-progress"]:hover {
     background: color-mix(in oklab, var(--warning) 17%, transparent);
+  }
+  .threadflow-journal-editor .tiptap a[data-threadflow-thread-status="archived"] {
+    border-color: color-mix(in oklab, var(--success) 42%, var(--border));
+    background: color-mix(in oklab, var(--success) 10%, transparent);
+    color: var(--success);
+  }
+  .threadflow-journal-editor .tiptap a[data-threadflow-thread-status="archived"]:hover {
+    background: color-mix(in oklab, var(--success) 17%, transparent);
   }
   .threadflow-journal-editor .tiptap hr { margin-top: 2em; border: 0; border-top: 1px solid var(--border); }
 
@@ -738,6 +756,15 @@ function elapsedTime(timestamp: number): string {
   return relative === "just now" ? "now" : relative.replace(/ ago$/, "");
 }
 
+function futureTime(timestamp: number): string {
+  const remainingMinutes = Math.max(0, Math.floor((timestamp - Date.now()) / 60_000));
+  if (remainingMinutes < 1) return "now";
+  if (remainingMinutes < 60) return `in ${remainingMinutes}m`;
+  const hours = Math.floor(remainingMinutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  return `in ${Math.floor(hours / 24)}d`;
+}
+
 function threadAccent(title: string, createdAt: number): { color: string } {
   const seed = `${title}\u0000${createdAt}`;
   let hash = 2_166_136_261;
@@ -968,6 +995,195 @@ type ChatSummaryData = {
   dismissed: boolean;
 };
 
+function formatWaitTimestamp(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(timestamp);
+}
+
+function WaitConditionDetails({ wait }: { wait: ActiveThreadflowWait }) {
+  const navigate = useBbNavigate();
+  if (wait.condition.kind === "instruction") {
+    return <p className="text-sm leading-relaxed text-foreground">{wait.condition.instruction}</p>;
+  }
+  if (wait.condition.kind === "threads_idle") {
+    return (
+      <div className="flex flex-wrap gap-x-3 gap-y-1.5">
+        {wait.condition.targets.map((target) => (
+          <button
+            key={target.threadId}
+            type="button"
+            onClick={() => navigate.toThread(target.threadId)}
+            className="text-sm font-medium text-warning underline decoration-warning/40 underline-offset-4 hover:decoration-warning"
+          >
+            {target.title}
+          </button>
+        ))}
+      </div>
+    );
+  }
+  if (wait.condition.kind === "thread_archived") {
+    return (
+      <button
+        type="button"
+        onClick={() => navigate.toThread(wait.condition.targetThreadId)}
+        className="text-sm font-medium text-warning underline decoration-warning/40 underline-offset-4 hover:decoration-warning"
+      >
+        Open {wait.condition.targetTitle}
+      </button>
+    );
+  }
+  if (wait.condition.kind === "pull_request_merged") {
+    return (
+      <p className="text-sm text-muted-foreground">
+        <UrlLink
+          href={wait.condition.pullRequestUrl}
+          className="font-medium text-warning underline decoration-warning/40 underline-offset-4 hover:decoration-warning"
+        >
+          PR #{wait.condition.pullRequestNumber}
+        </UrlLink>
+        {` for ${wait.condition.targetTitle}`}
+      </p>
+    );
+  }
+  return (
+    <div className="grid gap-1.5">
+      {wait.condition.runs.map((run) => (
+        <UrlLink
+          key={run.runUrl}
+          href={run.runUrl}
+          className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-warning/20 bg-background/40 px-2.5 py-1.5 text-sm text-foreground hover:border-warning/40 hover:bg-warning/10"
+        >
+          <span className="truncate">{run.workflowName}</span>
+          <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{run.headSha.slice(0, 7)}</span>
+        </UrlLink>
+      ))}
+    </div>
+  );
+}
+
+function queuedWaitTitle(wait: QueuedThreadWait): string {
+  if (wait.waitingKind === "time" && wait.sendAt !== null) {
+    return `Scheduled for ${formatWaitTimestamp(wait.sendAt)}`;
+  }
+  switch (wait.waitingKind) {
+    case "thread-busy":
+      return "Waiting for the current turn";
+    case "turn-starting":
+      return "Waiting for the turn to start";
+    case "provisioning":
+      return "Waiting for the workspace";
+    case "interaction":
+      return "Waiting for your response";
+    case "host-offline":
+    case "plugin":
+      return wait.reason;
+    case "time":
+    case "queued":
+      return "Waiting in the queue";
+  }
+}
+
+function QueuedWaitStatus({ wait }: { wait: QueuedThreadWait }) {
+  const title = queuedWaitTitle(wait);
+  return (
+    <div data-bb-plugin="threadflow" data-threadflow-wait-panel className="relative z-30 px-4 py-1.5">
+      <section
+        aria-label="Thread wait status"
+        className="rounded-lg bg-warning/10 px-3 py-2.5"
+      >
+        <h2 className="text-base font-semibold leading-snug text-foreground">{title}</h2>
+        {wait.message === "" ? null : (
+          <div className="mt-2 rounded-md bg-background/40 px-2.5 py-2">
+            <Markdown content={wait.message} className="max-h-[20vh] overflow-y-auto text-sm leading-relaxed text-foreground" />
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function NativeWaitStatus({ threadId }: { threadId: string }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [wait, setWait] = useState<ActiveThreadflowWait | null>(null);
+  const [queuedWait, setQueuedWait] = useState<QueuedThreadWait | null>(null);
+  const loadSequenceRef = useRef(0);
+  const refresh = useCallback(async () => {
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
+    try {
+      const result = await rpc.call("active_threadflow_wait", { threadId });
+      if (loadSequenceRef.current === sequence) {
+        setWait(result.wait);
+        setQueuedWait(result.queuedWait);
+      }
+    } catch {
+      // Keep the last known wait through transient plugin reloads.
+    }
+  }, [rpc, threadId]);
+
+  useEffect(() => {
+    setWait(null);
+    setQueuedWait(null);
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 15_000);
+    return () => {
+      loadSequenceRef.current += 1;
+      window.clearInterval(timer);
+    };
+  }, [refresh]);
+  useRealtime(THREADS_CHANGED_CHANNEL, () => void refresh());
+
+  if (wait === null) return queuedWait === null ? null : <QueuedWaitStatus wait={queuedWait} />;
+  const resuming = wait.state === "releasing" || wait.state === "ready";
+  return (
+    <div data-bb-plugin="threadflow" data-threadflow-wait-panel className="relative z-30 px-4 py-5">
+      <section
+        aria-label="Threadflow wait status"
+        className={resuming
+          ? "relative overflow-hidden rounded-xl border border-success/30 bg-success/10 px-5 py-4 shadow-sm"
+          : "relative overflow-hidden rounded-xl border border-warning/30 bg-warning/10 px-5 py-4 shadow-sm"}
+      >
+        <span aria-hidden className={resuming ? "absolute inset-y-0 left-0 w-1 bg-success/70" : "absolute inset-y-0 left-0 w-1 bg-warning/70"} />
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+          <span
+            aria-hidden
+            className={resuming
+              ? "size-2 rounded-full bg-success"
+              : "size-2 animate-pulse rounded-full bg-warning"}
+          />
+          {resuming ? "Resuming via Threadflow" : "Waiting via Threadflow"}
+        </div>
+        <h2 className="mt-2 text-lg font-semibold leading-snug text-foreground">{wait.label}</h2>
+        <div className="mt-3">
+          <WaitConditionDetails wait={wait} />
+        </div>
+        {wait.lastEvidence === null ? null : (
+          <p className="mt-3 rounded-md bg-background/40 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
+            Last check: {wait.lastEvidence}
+          </p>
+        )}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-current/10 pt-3 text-xs text-muted-foreground">
+          <span>
+            {resuming
+              ? "The condition is met. Threadflow is releasing the queued continuation below."
+              : "The queued message below is the continuation. Threadflow sends it when this condition is met."}
+          </span>
+          <span className="shrink-0">
+            {wait.condition.kind === "instruction" && wait.nextCheckAt !== null
+              ? `Next check ${formatWaitTimestamp(wait.nextCheckAt)} · `
+              : ""}
+            Deadline {formatWaitTimestamp(wait.deadlineAt)}
+          </span>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function NativeChatSummary({ threadId }: { threadId: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -1090,7 +1306,7 @@ function NativeChatSummary({ threadId }: { threadId: string }) {
             </button>
             <div className="flex justify-end pt-3" aria-label="Your message">
               <div className="relative max-w-[70%] rounded-2xl bg-[var(--surface-recessed-solid)] px-3 py-1.5">
-                <div className="max-h-24 overflow-y-auto">
+                <div className="max-h-[30vh] overflow-y-auto">
                   <Markdown content={summary.lastUserMessage} className="text-sm font-normal leading-relaxed text-foreground [&_code]:!text-[1em]" />
                 </div>
                 <svg
@@ -1103,7 +1319,7 @@ function NativeChatSummary({ threadId }: { threadId: string }) {
                 </svg>
               </div>
             </div>
-            <div className="max-h-32 overflow-y-auto pr-6">
+            <div className="pr-6">
               <Markdown content={summary.summary} className="text-sm font-normal leading-relaxed text-foreground [&_code]:!text-[1em]" />
             </div>
             {followUps.length > 0 ? (
@@ -1375,8 +1591,9 @@ function ThreadComposerBridge({ threadId, scopeKind }: {
   return (
     <div ref={bridgeRef}>
       <NativeUserMessageTimestampBridge threadId={threadId} />
-      <PromptAutocomplete />
       <NativeChatSummary threadId={threadId} />
+      <NativeWaitStatus threadId={threadId} />
+      <PromptAutocomplete />
     </div>
   );
 }
@@ -1617,9 +1834,13 @@ function SidebarThreadRow({
         </span>
         <span className="flex h-5 w-12 shrink-0 items-center justify-end text-right text-[9px] text-muted-foreground">
           <time
-            dateTime={new Date(thread.updatedAt).toISOString()}
+            dateTime={new Date(thread.scheduledSendAt ?? thread.updatedAt).toISOString()}
           >
-            {showWorkingDuration ? elapsedTime(thread.updatedAt) : relativeTime(thread.updatedAt)}
+            {thread.scheduledSendAt !== null
+              ? futureTime(thread.scheduledSendAt)
+              : showWorkingDuration
+                ? elapsedTime(thread.updatedAt)
+                : relativeTime(thread.updatedAt)}
           </time>
         </span>
         {pullRequest === null ? null : <PullRequestLink pullRequest={pullRequest} />}
@@ -1876,6 +2097,7 @@ function JournalDay({ dateKey }: { dateKey: string }) {
   const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const [content, setContent] = useState("");
+  const [threadStatuses, setThreadStatuses] = useState<Record<string, "archived" | "in-progress">>({});
   const [ready, setReady] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState(false);
@@ -1886,6 +2108,26 @@ function JournalDay({ dateKey }: { dateKey: string }) {
   const saveInFlightRef = useRef(false);
   const saveAgainRef = useRef(false);
   const loadSequenceRef = useRef(0);
+  const statusSequenceRef = useRef(0);
+  const referencedThreadIds = useMemo(() => threadReferenceIds(content).slice(0, 100), [content]);
+  const referencedThreadIdsKey = referencedThreadIds.join("\n");
+
+  const refreshThreadStatuses = useCallback(async () => {
+    const sequence = statusSequenceRef.current + 1;
+    statusSequenceRef.current = sequence;
+    const threadIds = referencedThreadIdsKey === "" ? [] : referencedThreadIdsKey.split("\n");
+    if (threadIds.length === 0) {
+      setThreadStatuses({});
+      return;
+    }
+    try {
+      const result = await rpc.call("journal_thread_statuses", { threadIds });
+      if (!mountedRef.current || statusSequenceRef.current !== sequence) return;
+      setThreadStatuses(Object.fromEntries(result.statuses.map(({ threadId, status }) => [threadId, status])));
+    } catch {
+      // Keep the last known colors through transient status lookup failures.
+    }
+  }, [referencedThreadIdsKey, rpc]);
 
   const load = useCallback(async () => {
     const sequence = loadSequenceRef.current + 1;
@@ -1938,9 +2180,14 @@ function JournalDay({ dateKey }: { dateKey: string }) {
     return () => {
       mountedRef.current = false;
       loadSequenceRef.current += 1;
+      statusSequenceRef.current += 1;
       void flush();
     };
   }, [flush, load]);
+  useEffect(() => {
+    void refreshThreadStatuses();
+  }, [refreshThreadStatuses]);
+  useRealtime(THREADS_CHANGED_CHANNEL, () => void refreshThreadStatuses());
   useEffect(() => {
     if (!ready || content === savedContentRef.current) return;
     const timer = window.setTimeout(() => void flush(), 450);
@@ -1974,6 +2221,7 @@ function JournalDay({ dateKey }: { dateKey: string }) {
         }}
         onBlur={() => void flush()}
         onOpenThread={(threadId) => navigate.toThread(threadId)}
+        threadStatuses={threadStatuses}
       />
       {saveError ? (
         <span role="status" className="mt-2 shrink-0 text-right text-xs text-destructive">

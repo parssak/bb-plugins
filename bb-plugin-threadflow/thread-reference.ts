@@ -27,6 +27,19 @@ export function parseThreadReferenceHref(href: string): string | null {
   }
 }
 
+export function threadReferenceIds(markdown: string): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const match of markdown.matchAll(/threadflow:\/\/thread\/[^\s)<>"']+/g)) {
+    const threadId = parseThreadReferenceHref(match[0]);
+    if (threadId === null) continue;
+    if (seen.has(threadId)) continue;
+    seen.add(threadId);
+    ids.push(threadId);
+  }
+  return ids;
+}
+
 export function serializeThreadReferenceDrag(reference: ThreadReference): string {
   return JSON.stringify(reference);
 }

@@ -30,6 +30,13 @@ function createWaitHost() {
     environmentId: "environment-target",
     title: "Dependency",
   });
+  const secondTargetThread = makeThreadResponse({
+    id: "thread-target-two",
+    projectId: "project-test",
+    environmentId: "environment-target-two",
+    title: "Second dependency",
+    status: "active",
+  });
   const workerThread = makeThreadResponse({
     id: "thread-checker",
     projectId: "project-test",
@@ -42,6 +49,8 @@ function createWaitHost() {
   const queuedRows = [];
   const spawnedWith = [];
   let nextQueueId = 1;
+  let targetThreadStatus = targetThread.status;
+  let secondTargetThreadStatus = secondTargetThread.status;
   let pullRequestState = "open";
   let checkerOutput = '{"decision":"ready","evidence":"The dependency is available."}';
   let githubRun = {
@@ -61,7 +70,8 @@ function createWaitHost() {
       threads: {
         get: async ({ threadId }) => {
           if (threadId === sleepingThread.id) return sleepingThread;
-          if (threadId === targetThread.id) return targetThread;
+          if (threadId === targetThread.id) return { ...targetThread, status: targetThreadStatus };
+          if (threadId === secondTargetThread.id) return { ...secondTargetThread, status: secondTargetThreadStatus };
           if (threadId === workerThread.id) return workerThread;
           throw new Error(`Unknown thread ${threadId}`);
         },
@@ -136,7 +146,7 @@ function createWaitHost() {
       },
     },
   });
-  registerThreadflowWaits(host.bb, {
+  const waitController = registerThreadflowWaits(host.bb, {
     excludedThreadTitlePrefixes: ["TLDR worker:"],
     inspectGithubWorkflowRun: async (identity) => {
       assert.equal(identity.runUrl, GITHUB_RUN_URL);
@@ -147,8 +157,10 @@ function createWaitHost() {
     ...host,
     queuedRows,
     sleepingThread,
+    secondTargetThread,
     spawnedWith,
     targetThread,
+    waitController,
     workerThread,
     setPullRequestState(state) {
       pullRequestState = state;
@@ -158,6 +170,11 @@ function createWaitHost() {
     },
     setGithubRun(update) {
       githubRun = { ...githubRun, ...update };
+    },
+    setThreadStatus(threadId, status) {
+      if (threadId === targetThread.id) targetThreadStatus = status;
+      else if (threadId === secondTargetThread.id) secondTargetThreadStatus = status;
+      else throw new Error(`Unknown thread ${threadId}`);
     },
   };
 }
@@ -201,6 +218,14 @@ test("threadflow waits are atomic, durable across reload, and released by target
   assert.equal(results.filter((result) => String(result).includes(" armed:")).length, 1);
   assert.equal(results.filter((result) => String(result).includes("already sleeping")).length, 1);
   assert.equal(state.harness.inspection.sdk.callsTo("threads.send").length, 1);
+  const activeWait = await state.waitController.getActiveWait(state.sleepingThread.id);
+  assert.equal(activeWait?.state, "waiting");
+  assert.equal(activeWait?.label, "Waiting for “Dependency” to be archived");
+  assert.deepEqual(activeWait?.condition, {
+    kind: "thread_archived",
+    targetThreadId: state.targetThread.id,
+    targetTitle: state.targetThread.title,
+  });
 
   const initialHook = state.harness.inspection.registrations.hooks["message.dispatch"];
   assert.ok(initialHook);
@@ -232,6 +257,59 @@ test("threadflow waits are atomic, durable across reload, and released by target
   await reloaded.harness.lifecycle.dispose();
 });
 
+test("threads_idle waits for every target and wakes from idle events", async () => {
+  const state = createWaitHost();
+  state.setThreadStatus(state.targetThread.id, "active");
+  const input = {
+    condition: {
+      kind: "threads_idle",
+      threadIds: [state.targetThread.id, state.secondTargetThread.id],
+    },
+    timeoutMinutes: 60,
+    resumePrompt: "Continue after both dependencies finish.",
+  };
+  const result = await state.harness.behavior.callAgentTool(
+    "threadflow_wait",
+    input,
+    { threadId: state.sleepingThread.id },
+  );
+  assert.match(String(result), /Waiting for 2 threads to become idle/);
+  assert.deepEqual((await state.waitController.getActiveWait(state.sleepingThread.id))?.condition, {
+    kind: "threads_idle",
+    targets: [
+      { threadId: state.targetThread.id, title: "Dependency" },
+      { threadId: state.secondTargetThread.id, title: "Second dependency" },
+    ],
+  });
+  assert.match(
+    (await state.waitController.getActiveWait(state.sleepingThread.id))?.lastEvidence ?? "",
+    /Dependency.*active.*Second dependency.*active/,
+  );
+
+  state.setThreadStatus(state.targetThread.id, "idle");
+  await state.harness.behavior.emitThreadEvent("thread.idle", {
+    thread: { ...state.targetThread, status: "idle" },
+    lastAssistantText: null,
+  });
+  assert.equal(state.harness.inspection.recheckCount, 0);
+  assert.equal(
+    (await state.waitController.getActiveWait(state.sleepingThread.id))?.lastEvidence,
+    "Still running: “Second dependency” (active).",
+  );
+
+  state.setThreadStatus(state.secondTargetThread.id, "idle");
+  await state.harness.behavior.emitThreadEvent("thread.idle", {
+    thread: { ...state.secondTargetThread, status: "idle" },
+    lastAssistantText: null,
+  });
+  assert.equal(state.harness.inspection.recheckCount, 1);
+  const hook = state.harness.inspection.registrations.hooks["message.dispatch"];
+  assert.ok(hook);
+  assert.equal((await hook(dispatchContext(state.sleepingThread, state.queuedRows[0]))).action, "proceed");
+  assert.equal(state.queuedRows[0].content[0].text, input.resumePrompt);
+  await state.harness.lifecycle.dispose();
+});
+
 test("manual dispatch completes a wait and permits another wait", async () => {
   const state = createWaitHost();
   const input = {
@@ -245,6 +323,25 @@ test("manual dispatch completes a wait and permits another wait", async () => {
   const second = await state.harness.behavior.callAgentTool("threadflow_wait", input, { threadId: state.sleepingThread.id });
   assert.match(String(second), / armed:/);
   assert.equal(state.harness.inspection.sdk.callsTo("threads.send").length, 2);
+  await state.harness.lifecycle.dispose();
+});
+
+test("reading an active wait clears stale state after its queued continuation is cancelled", async () => {
+  const state = createWaitHost();
+  await state.harness.behavior.callAgentTool("threadflow_wait", {
+    condition: { kind: "thread_archived", targetThreadId: state.targetThread.id },
+    timeoutMinutes: 60,
+    resumePrompt: "Continue.",
+  }, { threadId: state.sleepingThread.id });
+  assert.equal((await state.waitController.getActiveWait(state.sleepingThread.id))?.state, "waiting");
+
+  state.queuedRows.splice(0);
+
+  assert.equal(await state.waitController.getActiveWait(state.sleepingThread.id), null);
+  const row = state.bb.storage.database().prepare(
+    "SELECT state FROM threadflow_waits WHERE thread_id = ?",
+  ).get(state.sleepingThread.id);
+  assert.equal(row.state, "cancelled");
   await state.harness.lifecycle.dispose();
 });
 

@@ -25,6 +25,11 @@ const INSTRUCTION_CHECK_MODELS = ["gpt-5.3-codex-spark", "gpt-5.6-luna"] as cons
 
 export const waitConditionSchema = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("threads_idle"),
+    threadIds: z.array(z.string().min(1).max(100)).min(1).max(50)
+      .refine((threadIds) => new Set(threadIds).size === threadIds.length, "Thread IDs must be unique."),
+  }).strict(),
+  z.object({
     kind: z.literal("thread_archived"),
     targetThreadId: z.string().min(1).max(100),
   }).strict(),
@@ -50,7 +55,14 @@ export const threadflowWaitParametersSchema = z.object({
 
 type WaitConditionInput = z.infer<typeof waitConditionSchema>;
 
-const resolvedConditionSchema = z.discriminatedUnion("kind", [
+export const resolvedConditionSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("threads_idle"),
+    targets: z.array(z.object({
+      threadId: z.string(),
+      title: z.string(),
+    }).strict()).min(1).max(50),
+  }).strict(),
   z.object({
     kind: z.literal("thread_archived"),
     targetThreadId: z.string(),
@@ -82,6 +94,24 @@ const resolvedConditionSchema = z.discriminatedUnion("kind", [
 ]);
 
 type ResolvedCondition = z.infer<typeof resolvedConditionSchema>;
+
+export const activeThreadflowWaitSchema = z.object({
+  id: z.string().uuid(),
+  state: z.enum(["arming", "waiting", "releasing", "ready"]),
+  label: z.string(),
+  condition: resolvedConditionSchema,
+  deadlineAt: z.number(),
+  nextCheckAt: z.number().nullable(),
+  checkCount: z.number().int().nonnegative(),
+  lastEvidence: z.string().nullable(),
+  createdAt: z.number(),
+}).strict();
+
+export type ActiveThreadflowWait = z.infer<typeof activeThreadflowWaitSchema>;
+
+export type ThreadflowWaitController = {
+  getActiveWait(threadId: string): Promise<ActiveThreadflowWait | null>;
+};
 
 const waitStateSchema = z.enum([
   "arming",
@@ -176,6 +206,7 @@ interface ResolvedConditionResult {
   condition: ResolvedCondition;
   label: string;
   alreadySatisfied: string | null;
+  initialEvidence?: string;
 }
 
 function threadTitle(thread: { title: string | null; titleFallback: string | null }): string {
@@ -262,7 +293,7 @@ export function registerThreadflowWaits(
       signal?: AbortSignal,
     ) => Promise<GithubWorkflowRun>;
   } = {},
-): void {
+): ThreadflowWaitController {
   const db = bb.storage.database();
   bb.storage.migrate(db, [
     `CREATE TABLE IF NOT EXISTS threadflow_waits (
@@ -338,6 +369,25 @@ export function registerThreadflowWaits(
         condition,
         label: `Waiting until: ${condition.instruction.replace(/\s+/g, " ").slice(0, 140)}`,
         alreadySatisfied: null,
+      };
+    }
+
+    if (condition.kind === "threads_idle") {
+      if (condition.threadIds.includes(sleepingThreadId)) {
+        throw new Error("A thread cannot wait for itself to become idle.");
+      }
+      const threads = await Promise.all(condition.threadIds.map((threadId) => bb.sdk.threads.get({ threadId })));
+      const targets = threads.map((thread) => ({ threadId: thread.id, title: threadTitle(thread) }));
+      const pending = threads.flatMap((thread, index) => thread.status === "idle"
+        ? []
+        : [`“${targets[index]!.title}” (${thread.status})`]);
+      return {
+        condition: { kind: condition.kind, targets },
+        label: `Waiting for ${targets.length} ${targets.length === 1 ? "thread" : "threads"} to become idle`,
+        alreadySatisfied: pending.length === 0
+          ? `${targets.length === 1 ? `“${targets[0]!.title}” is` : `All ${targets.length} threads are`} already idle.`
+          : null,
+        initialEvidence: `Still running: ${pending.join(", ")}.`,
       };
     }
 
@@ -529,8 +579,8 @@ export function registerThreadflowWaits(
     try {
       db.prepare(`INSERT INTO threadflow_waits (
         id, thread_id, condition_kind, condition_json, state, label, resume_prompt,
-        deadline_at, next_check_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'arming', ?, ?, ?, ?, ?, ?)`)
+        deadline_at, next_check_at, last_evidence, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'arming', ?, ?, ?, ?, ?, ?, ?)`)
         .run(
           waitId,
           sleepingThreadId,
@@ -540,6 +590,7 @@ export function registerThreadflowWaits(
           resumePrompt,
           deadlineAt,
           nextCheckAt,
+          resolved.initialEvidence ?? null,
           now,
           now,
         );
@@ -590,6 +641,35 @@ export function registerThreadflowWaits(
 
   const evaluateDirectWait = async (wait: WaitRecord, signal: AbortSignal): Promise<void> => {
     if (wait.condition.kind === "instruction") return;
+    if (wait.condition.kind === "threads_idle") {
+      try {
+        const threads = await Promise.all(wait.condition.targets.map((target) => (
+          bb.sdk.threads.get({ threadId: target.threadId })
+        )));
+        const pending = threads.flatMap((thread, index) => thread.status === "idle"
+          ? []
+          : [`“${wait.condition.targets[index]!.title}” (${thread.status})`]);
+        if (pending.length === 0) {
+          await releaseWait(wait.id, {
+            outcome: "condition_met",
+            observedAt: Date.now(),
+            detail: `${threads.length === 1 ? `“${wait.condition.targets[0]!.title}” is` : `All ${threads.length} threads are`} idle.`,
+          });
+          return;
+        }
+        const now = Date.now();
+        db.prepare(`UPDATE threadflow_waits
+          SET next_check_at = ?, last_evidence = ?, updated_at = ?
+          WHERE id = ? AND state = 'waiting'`)
+          .run(now + DIRECT_CHECK_INTERVAL_MS, `Still running: ${pending.join(", ")}.`, now, wait.id);
+      } catch (cause) {
+        if (signal.aborted) return;
+        bb.log.debug(`Could not check idle threads for wait ${wait.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
+        db.prepare("UPDATE threadflow_waits SET next_check_at = ?, updated_at = ? WHERE id = ? AND state = 'waiting'")
+          .run(Date.now() + DIRECT_CHECK_INTERVAL_MS, Date.now(), wait.id);
+      }
+      return;
+    }
     if (wait.condition.kind === "thread_archived") {
       try {
         const target = await bb.sdk.threads.get({ threadId: wait.condition.targetThreadId });
@@ -947,8 +1027,10 @@ export function registerThreadflowWaits(
   };
   const failWaitsTargetingDeletedThread = async (threadId: string) => {
     const waits = listWaits("state = 'waiting'").filter((wait) => (
-      (wait.condition.kind === "thread_archived" || wait.condition.kind === "pull_request_merged")
-      && wait.condition.targetThreadId === threadId
+      ((wait.condition.kind === "thread_archived" || wait.condition.kind === "pull_request_merged")
+        && wait.condition.targetThreadId === threadId)
+      || (wait.condition.kind === "threads_idle"
+        && wait.condition.targets.some((target) => target.threadId === threadId))
     ));
     for (const wait of waits) {
       await releaseWait(wait.id, {
@@ -958,8 +1040,25 @@ export function registerThreadflowWaits(
       });
     }
   };
+  const reevaluateThreadIdleWaits = async (threadId: string) => {
+    const waits = listWaits("state = 'waiting'").filter((wait) => (
+      wait.condition.kind === "threads_idle"
+      && wait.condition.targets.some((target) => target.threadId === threadId)
+    ));
+    for (const wait of waits) await evaluateDirectWait(wait, new AbortController().signal);
+  };
+  bb.events.on("thread.active", async ({ thread }) => {
+    await reevaluateThreadIdleWaits(thread.id);
+  });
+  bb.events.on("thread.idle", async ({ thread }) => {
+    await reevaluateThreadIdleWaits(thread.id);
+  });
+  bb.events.on("thread.failed", async ({ thread }) => {
+    await reevaluateThreadIdleWaits(thread.id);
+  });
   bb.events.on("thread.archived", async ({ thread }) => {
     await handleSleepingThreadEnded(thread.id);
+    await reevaluateThreadIdleWaits(thread.id);
     const waits = listWaits("state = 'waiting'").filter((wait) => (
       wait.condition.kind === "thread_archived" && wait.condition.targetThreadId === thread.id
     ));
@@ -1005,7 +1104,7 @@ export function registerThreadflowWaits(
 
   bb.agents.registerTool({
     name: "threadflow_wait",
-    description: "Sleep this thread until another BB thread is archived, its current pull request is merged, exact GitHub Actions runs succeed, or a cheap read-only agent judges a custom condition ready.",
+    description: "Sleep this thread until one or more BB threads are idle, another thread is archived, its current pull request is merged, exact GitHub Actions runs succeed, or a cheap read-only agent judges a custom condition ready.",
     instructions: "Use typed conditions when possible. After an armed or already-waiting result, end the turn immediately and do not poll. Continue only when the result says the condition was already satisfied.",
     presentation: {
       label: {
@@ -1034,4 +1133,22 @@ export function registerThreadflowWaits(
       : ["threadflow_wait"],
     skills: [],
   }));
+
+  return {
+    async getActiveWait(threadId) {
+      const wait = await reconcileActiveWaitForThread(threadId);
+      if (wait === null || wait.state === "completed" || wait.state === "cancelled") return null;
+      return {
+        id: wait.id,
+        state: wait.state,
+        label: wait.label,
+        condition: wait.condition,
+        deadlineAt: wait.deadlineAt,
+        nextCheckAt: wait.nextCheckAt,
+        checkCount: wait.checkCount,
+        lastEvidence: wait.lastEvidence,
+        createdAt: wait.createdAt,
+      };
+    },
+  };
 }

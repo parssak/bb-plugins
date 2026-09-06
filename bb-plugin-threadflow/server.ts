@@ -15,12 +15,13 @@ import {
 } from "./thread-nudger-message.ts";
 import { isJournalDateKey } from "./journal-date.ts";
 import { collectUserMessageTimestamps } from "./user-message-timestamp.ts";
+import { classifyThreadListState } from "./thread-list-state.ts";
 import {
   appendUsageSample,
   calculateTodayUsedPercent,
   type UsageSample,
 } from "./usage-tracking.ts";
-import { registerThreadflowWaits } from "./wait-service.ts";
+import { activeThreadflowWaitSchema, registerThreadflowWaits } from "./wait-service.ts";
 
 const scopeSchema = z.enum(["recent", "all"]);
 const USER_MESSAGE_TIMESTAMP_PAGE_LIMIT = 25;
@@ -51,6 +52,23 @@ const generatedSummarySchema = z.object({
   summary: z.string().trim().min(1),
   followUps: z.array(z.string().trim().min(1).max(240)).min(1).max(3),
 }).strict();
+const queuedThreadWaitSchema = z.object({
+  id: z.string(),
+  waitingKind: z.enum([
+    "time",
+    "thread-busy",
+    "turn-starting",
+    "provisioning",
+    "host-offline",
+    "interaction",
+    "plugin",
+    "queued",
+  ]),
+  reason: z.string(),
+  message: z.string(),
+  sendAt: z.number().nullable(),
+}).strict();
+export type QueuedThreadWait = z.infer<typeof queuedThreadWaitSchema>;
 const usageWindowSchema = z.object({
   label: z.string(),
   resetsAt: z.string().nullable(),
@@ -76,6 +94,7 @@ const nativeThreadSchema = z.object({
   archived: z.boolean(),
   needsAttention: z.boolean(),
   queuedWork: z.enum(["none", "waiting", "failed"]),
+  scheduledSendAt: z.number().nullable(),
   status: z.string(),
   sideChats: z.array(sideChatSchema),
 });
@@ -161,6 +180,17 @@ export const rpcContract = defineRpcContract({
     }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
+  journal_thread_statuses: {
+    input: z.object({
+      threadIds: z.array(z.string().min(1).max(100)).max(100),
+    }).strict(),
+    output: z.object({
+      statuses: z.array(z.object({
+        threadId: z.string(),
+        status: z.enum(["archived", "in-progress"]),
+      }).strict()).max(100),
+    }).strict(),
+  },
   create_side_chat: {
     input: z.object({
       sourceThreadId: z.string().min(1).max(100),
@@ -217,6 +247,13 @@ export const rpcContract = defineRpcContract({
   chat_summary: {
     input: z.object({ threadId: z.string().min(1).max(100) }).strict(),
     output: z.object({ summary: chatSummarySchema.nullable() }).strict(),
+  },
+  active_threadflow_wait: {
+    input: z.object({ threadId: z.string().min(1).max(100) }).strict(),
+    output: z.object({
+      wait: activeThreadflowWaitSchema.nullable(),
+      queuedWait: queuedThreadWaitSchema.nullable(),
+    }).strict(),
   },
   set_chat_summary_dismissed: {
     input: z.object({
@@ -289,6 +326,53 @@ function isRunningStatus(status: string): boolean {
 type ChatSummary = z.infer<typeof chatSummarySchema>;
 type PendingHandoff = { sourceThreadId: string };
 type AutomaticReviewClaim = { claimedAt: number };
+type QueuedMessage = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["queuedMessages"]["list"]>>[number];
+
+function queuedMessageText(entry: QueuedMessage): string {
+  return entry.content
+    .flatMap((part) => part.type === "text" && part.visibility !== "agent-only" ? [part.text.trim()] : [])
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, 1_000);
+}
+
+function queuedWaitReason(entry: QueuedMessage): QueuedThreadWait["reason"] {
+  if (entry.waitingOn === null) return "This continuation is waiting in the queue.";
+  switch (entry.waitingOn.kind) {
+    case "time":
+      return "This continuation will be sent automatically at the scheduled time.";
+    case "thread-busy":
+      return "The current turn must finish before this continuation can be sent.";
+    case "turn-starting":
+      return "The current turn must start before this continuation can be sent.";
+    case "provisioning":
+      return "The workspace must finish provisioning before this continuation can be sent.";
+    case "host-offline":
+      return `Waiting for ${entry.waitingOn.hostName} to come back online.`;
+    case "interaction":
+      return "This thread needs your response before the continuation can be sent.";
+    case "plugin":
+      return entry.waitingOn.reason;
+  }
+}
+
+async function queuedWaitForThread(bb: BbPluginApi, threadId: string): Promise<QueuedThreadWait | null> {
+  const [thread, entries] = await Promise.all([
+    bb.sdk.threads.get({ threadId }),
+    bb.sdk.threads.queuedMessages.list({ threadId }),
+  ]);
+  if (thread.archivedAt !== null || thread.runtime.displayStatus !== "idle") return null;
+  const entry = entries.find((candidate) => candidate.waitingOn !== null || candidate.sendAt !== null)
+    ?? entries[0];
+  if (entry === undefined) return null;
+  return {
+    id: entry.id,
+    waitingKind: entry.waitingOn?.kind ?? "queued",
+    reason: queuedWaitReason(entry),
+    message: queuedMessageText(entry),
+    sendAt: entry.sendAt,
+  };
+}
 
 function summaryKey(threadId: string): string {
   return `${SUMMARY_KEY_PREFIX}${threadId}`;
@@ -369,7 +453,7 @@ export default function plugin(bb: BbPluginApi) {
       secret: true,
     },
   });
-  registerThreadflowWaits(bb, {
+  const threadflowWaits = registerThreadflowWaits(bb, {
     excludedThreadTitlePrefixes: [SUMMARY_WORKER_TITLE_PREFIX],
     getGithubToken: async () => (await settings.get()).githubToken,
   });
@@ -741,8 +825,11 @@ export default function plugin(bb: BbPluginApi) {
         prompt: [
           "Summarize the newest assistant response below for a busy engineer returning to a coding thread.",
           "Use the earlier messages only to resolve references and preserve the current task context.",
-          "Return only valid JSON with this exact shape: {\"summary\":\"- Markdown bullet\\n- Markdown bullet\",\"followUps\":[\"Message to send\"]}.",
-          "The summary must contain 1-3 extremely terse Markdown bullet points, at most 45 words total.",
+          "Return only valid JSON with this exact shape: {\"summary\":\"Outcome sentence.\\n\\nShort status sentence.\",\"followUps\":[\"Message to send\"]}.",
+          "Write the summary as 1-3 brief prose paragraphs, at most 55 words total. Do not use bullets, numbered lists, or headings.",
+          "Pull out the few sentences that carry the outcome, cause, fix, blocker, or next action. Simplify them when possible without dropping the mechanism or consequence.",
+          "Compress routine progress details. For example, reduce a verbose spawned-thread update to \"Started @thread:THREAD_ID in a fresh worktree.\" Keep qualifiers only when they change what the user should do.",
+          "Preserve useful links attached to retained facts. Copy exact Markdown link syntax and exact @thread:... references so they remain clickable. Never alter a link target or thread ID, and do not invent links.",
           "Add 1-3 follow-up messages that the user can send next. Each must be a concrete 1-4 word command, such as \"Fix it\", \"Add tests\", or \"Show the diff\".",
           "Use REPOSITORY STATE as fact. If there are uncommitted files, include \"Commit\". If there is no pull request and the branch has commits ahead, include \"Make PR\". If both apply, put \"Commit\" before \"Make PR\". Do not suggest \"Make PR\" for uncommitted-only work.",
           "If the exchange concerns a pull request and no unresolved blocker makes merging unsafe, prefer \"Merge to main\" as one follow-up.",
@@ -931,12 +1018,13 @@ export default function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     threads: async ({ scope, query }) => {
-      const [active, archived, activeSideChats, projects, providers] = await Promise.all([
+      const [active, archived, activeSideChats, queuedMessages, projects, providers] = await Promise.all([
         bb.sdk.threads.list({ archived: false, includeHidden: false, limit: MAX_THREADS_PER_STATE }),
         scope === "all"
           ? bb.sdk.threads.list({ archived: true, includeHidden: false, limit: MAX_THREADS_PER_STATE })
           : Promise.resolve([]),
         bb.sdk.threads.list({ archived: false, includeHidden: true, originKind: "fork", limit: MAX_THREADS_PER_STATE }),
+        bb.sdk.threads.queue.list(),
         bb.sdk.projects.list({ includePersonal: true }),
         bb.sdk.providers.list(),
       ]);
@@ -944,6 +1032,14 @@ export default function plugin(bb: BbPluginApi) {
       const providerNames = new Map(providers.map((provider) => [provider.id, provider.displayName]));
       const normalizedQuery = query.toLocaleLowerCase();
       const cutoff = Date.now() - TWO_DAYS_MS;
+      const scheduledSendAtByThread = new Map<string, number>();
+      for (const entry of queuedMessages) {
+        if (entry.waitingOn?.kind !== "time" || entry.sendAt === null) continue;
+        const existing = scheduledSendAtByThread.get(entry.threadId);
+        if (existing === undefined || entry.sendAt < existing) {
+          scheduledSendAtByThread.set(entry.threadId, entry.sendAt);
+        }
+      }
       const sideChatsBySource = new Map<string, NativeSideChat[]>();
       for (const sideChat of activeSideChats) {
         const running = isRunningStatus(sideChat.status);
@@ -980,6 +1076,11 @@ export default function plugin(bb: BbPluginApi) {
           archived: thread.archivedAt !== null,
           needsAttention: thread.hasPendingInteraction,
           queuedWork: thread.queuedWork,
+          scheduledSendAt: thread.status === "idle"
+            && !thread.hasPendingInteraction
+            && thread.queuedWork === "waiting"
+            ? scheduledSendAtByThread.get(thread.id) ?? null
+            : null,
           status: thread.status,
           sideChats: sideChatsBySource.get(thread.id) ?? [],
         }))
@@ -1177,6 +1278,57 @@ export default function plugin(bb: BbPluginApi) {
       else await bb.storage.kv.set(key, content);
       return { ok: true as const };
     },
+    journal_thread_statuses: async ({ threadIds }) => {
+      const uniqueThreadIds = [...new Set(threadIds)];
+      const threads = (await Promise.all(uniqueThreadIds.map(async (threadId) => {
+        try {
+          return await bb.sdk.threads.get({ threadId });
+        } catch {
+          return null;
+        }
+      }))).filter((thread) => thread !== null);
+      const sourceThreadIds = new Set(
+        threads.flatMap((thread) => thread.sourceThreadId === null && thread.archivedAt === null ? [thread.id] : []),
+      );
+      const activeSideChats = sourceThreadIds.size === 0
+        ? []
+        : await bb.sdk.threads.list({
+          archived: false,
+          includeHidden: true,
+          originKind: "fork",
+          limit: MAX_THREADS_PER_STATE,
+        });
+      const sideChatsBySource = new Map<string, Array<{ needsAttention: boolean; running: boolean }>>();
+      for (const sideChat of activeSideChats) {
+        if (
+          sideChat.visibility !== "hidden"
+          || sideChat.sourceThreadId === null
+          || !sourceThreadIds.has(sideChat.sourceThreadId)
+        ) continue;
+        const sideChats = sideChatsBySource.get(sideChat.sourceThreadId) ?? [];
+        sideChats.push({
+          needsAttention: sideChat.hasPendingInteraction,
+          running: isRunningStatus(sideChat.status),
+        });
+        sideChatsBySource.set(sideChat.sourceThreadId, sideChats);
+      }
+      const statuses = threads.flatMap((thread) => {
+        if (thread.archivedAt !== null) {
+          return [{ threadId: thread.id, status: "archived" as const }];
+        }
+        const state = classifyThreadListState({
+          archived: false,
+          needsAttention: thread.hasPendingInteraction,
+          queuedWork: thread.queuedWork,
+          sideChats: sideChatsBySource.get(thread.id) ?? [],
+          status: thread.status,
+        });
+        return state === "working" || state === "waiting"
+          ? [{ threadId: thread.id, status: "in-progress" as const }]
+          : [];
+      });
+      return { statuses };
+    },
     create_side_chat: createSideChat,
     create_automatic_review: async ({ sourceThreadId }) => {
       const sourceThread = await sourceThreadFor(sourceThreadId);
@@ -1285,6 +1437,13 @@ export default function plugin(bb: BbPluginApi) {
     chat_summary: async ({ threadId }) => {
       const summary = await getDisplayableSummary(threadId);
       return { summary: summary ?? null };
+    },
+    active_threadflow_wait: async ({ threadId }) => {
+      const wait = await threadflowWaits.getActiveWait(threadId);
+      return {
+        wait,
+        queuedWait: wait === null ? await queuedWaitForThread(bb, threadId) : null,
+      };
     },
     set_chat_summary_dismissed: async ({ threadId, dismissed }) => {
       const summary = await getDisplayableSummary(threadId);

@@ -6,6 +6,7 @@ import {
   parseThreadReferenceHref,
   serializeThreadReferenceDrag,
   threadReferenceHref,
+  threadReferenceIds,
   threadReferenceMarkdown,
 } from "./thread-reference.ts";
 
@@ -17,6 +18,15 @@ test("round-trips a Threadflow thread reference", () => {
     threadReferenceMarkdown({ id: reference.id, title: "Fix [the] header" }),
     "[Fix \\[the\\] header](threadflow://thread/thr_abc-123)",
   );
+});
+
+test("collects unique valid thread references from journal Markdown", () => {
+  assert.deepEqual(threadReferenceIds([
+    "[One](threadflow://thread/thr_one)",
+    "[Two](threadflow://thread/thr_two)",
+    "[One again](threadflow://thread/thr_one)",
+    "[Invalid](threadflow://thread/not%2Fvalid)",
+  ].join("\n")), ["thr_one", "thr_two"]);
 });
 
 test("rejects malformed thread references", () => {
