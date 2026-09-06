@@ -1087,20 +1087,39 @@ function queuedWaitTitle(wait: QueuedThreadWait): string {
   }
 }
 
-function QueuedWaitStatus({ wait }: { wait: QueuedThreadWait }) {
-  const title = queuedWaitTitle(wait);
+function ThreadWaitStatusCard({ status }: {
+  status: { kind: "queued"; wait: QueuedThreadWait } | { kind: "threadflow"; wait: ActiveThreadflowWait };
+}) {
+  const title = status.kind === "queued" ? queuedWaitTitle(status.wait) : status.wait.label;
+  const resuming = status.kind === "threadflow"
+    && (status.wait.state === "releasing" || status.wait.state === "ready");
   return (
     <div data-bb-plugin="threadflow" data-threadflow-wait-panel className="relative z-30 px-4 py-1.5">
       <section
         aria-label="Thread wait status"
-        className="rounded-lg bg-warning/10 px-3 py-2.5"
+        className={resuming
+          ? "rounded-lg bg-success/10 px-3 py-2.5"
+          : "rounded-lg bg-warning/10 px-3 py-2.5"}
       >
         <h2 className="text-base font-semibold leading-snug text-foreground">{title}</h2>
-        {wait.message === "" ? null : (
-          <div className="mt-2 rounded-md bg-background/40 px-2.5 py-2">
-            <Markdown content={wait.message} className="max-h-[20vh] overflow-y-auto text-sm leading-relaxed text-foreground" />
-          </div>
-        )}
+        {status.kind === "queued"
+          ? status.wait.message === "" ? null : (
+              <div className="mt-2 rounded-md bg-background/40 px-2.5 py-2">
+                <Markdown content={status.wait.message} className="max-h-[20vh] overflow-y-auto text-sm leading-relaxed text-foreground" />
+              </div>
+            )
+          : (
+              <>
+                <div className="mt-2">
+                  <WaitConditionDetails wait={status.wait} />
+                </div>
+                {status.wait.lastEvidence === null ? null : (
+                  <p className="mt-2 rounded-md bg-background/40 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
+                    Last check: {status.wait.lastEvidence}
+                  </p>
+                )}
+              </>
+            )}
       </section>
     </div>
   );
@@ -1137,51 +1156,8 @@ function NativeWaitStatus({ threadId }: { threadId: string }) {
   }, [refresh]);
   useRealtime(THREADS_CHANGED_CHANNEL, () => void refresh());
 
-  if (wait === null) return queuedWait === null ? null : <QueuedWaitStatus wait={queuedWait} />;
-  const resuming = wait.state === "releasing" || wait.state === "ready";
-  return (
-    <div data-bb-plugin="threadflow" data-threadflow-wait-panel className="relative z-30 px-4 py-5">
-      <section
-        aria-label="Threadflow wait status"
-        className={resuming
-          ? "relative overflow-hidden rounded-xl border border-success/30 bg-success/10 px-5 py-4 shadow-sm"
-          : "relative overflow-hidden rounded-xl border border-warning/30 bg-warning/10 px-5 py-4 shadow-sm"}
-      >
-        <span aria-hidden className={resuming ? "absolute inset-y-0 left-0 w-1 bg-success/70" : "absolute inset-y-0 left-0 w-1 bg-warning/70"} />
-        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-          <span
-            aria-hidden
-            className={resuming
-              ? "size-2 rounded-full bg-success"
-              : "size-2 animate-pulse rounded-full bg-warning"}
-          />
-          {resuming ? "Resuming via Threadflow" : "Waiting via Threadflow"}
-        </div>
-        <h2 className="mt-2 text-lg font-semibold leading-snug text-foreground">{wait.label}</h2>
-        <div className="mt-3">
-          <WaitConditionDetails wait={wait} />
-        </div>
-        {wait.lastEvidence === null ? null : (
-          <p className="mt-3 rounded-md bg-background/40 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
-            Last check: {wait.lastEvidence}
-          </p>
-        )}
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-current/10 pt-3 text-xs text-muted-foreground">
-          <span>
-            {resuming
-              ? "The condition is met. Threadflow is releasing the queued continuation below."
-              : "The queued message below is the continuation. Threadflow sends it when this condition is met."}
-          </span>
-          <span className="shrink-0">
-            {wait.condition.kind === "instruction" && wait.nextCheckAt !== null
-              ? `Next check ${formatWaitTimestamp(wait.nextCheckAt)} · `
-              : ""}
-            Deadline {formatWaitTimestamp(wait.deadlineAt)}
-          </span>
-        </div>
-      </section>
-    </div>
-  );
+  if (wait !== null) return <ThreadWaitStatusCard status={{ kind: "threadflow", wait }} />;
+  return queuedWait === null ? null : <ThreadWaitStatusCard status={{ kind: "queued", wait: queuedWait }} />;
 }
 
 function NativeChatSummary({ threadId }: { threadId: string }) {
