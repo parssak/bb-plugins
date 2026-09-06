@@ -15,12 +15,21 @@ import {
 } from "./thread-nudger-message.ts";
 import { isJournalDateKey } from "./journal-date.ts";
 import { collectUserMessageTimestamps } from "./user-message-timestamp.ts";
+import {
+  appendUsageSample,
+  calculateTodayUsedPercent,
+  type UsageSample,
+} from "./usage-tracking.ts";
 import { registerThreadflowWaits } from "./wait-service.ts";
 
 const scopeSchema = z.enum(["recent", "all"]);
 const USER_MESSAGE_TIMESTAMP_PAGE_LIMIT = 25;
 const JOURNAL_KEY_PREFIX = "journal:";
 const MAX_JOURNAL_CONTENT_LENGTH = 100_000;
+const USAGE_SAMPLES_KEY = "usage:samples:v1";
+const WORKOUT_SCRATCHPAD_KEY = "workout:scratchpad:v1";
+const MAX_USAGE_SAMPLES = 2_048;
+const MAX_WORKOUT_SCRATCHPAD_LENGTH = 4_000;
 const journalDateKeySchema = z.string().refine(isJournalDateKey, "Invalid local date");
 const sideChatSchema = z.object({
   id: z.string(),
@@ -45,7 +54,16 @@ const generatedSummarySchema = z.object({
 const usageWindowSchema = z.object({
   label: z.string(),
   resetsAt: z.string().nullable(),
-  usedPercent: z.number(),
+  usedPercent: z.number().min(0).max(100),
+}).strict();
+const usageSampleSchema = z.object({
+  observedAt: z.number().int().nonnegative(),
+  resetsAt: z.string().nullable(),
+  usedPercent: z.number().min(0).max(100),
+}).strict();
+const todayUsageSchema = z.object({
+  coverage: z.enum(["full-day", "partial-day"]),
+  usedPercent: z.number().min(0).max(100),
 }).strict();
 const nativeThreadSchema = z.object({
   id: z.string(),
@@ -92,18 +110,32 @@ export const rpcContract = defineRpcContract({
     output: z.object({ archived: z.boolean() }).strict(),
   },
   codex_usage: {
-    input: z.object({}).strict(),
+    input: z.object({
+      dayStartedAt: z.number().int().nonnegative(),
+      legacySamples: z.array(usageSampleSchema).max(MAX_USAGE_SAMPLES).optional(),
+    }).strict(),
     output: z.discriminatedUnion("status", [
       z.object({
         status: z.literal("ok"),
         planLabel: z.string().nullable(),
         windows: z.array(usageWindowSchema),
+        todayUsage: todayUsageSchema.nullable(),
       }).strict(),
       z.object({
         status: z.literal("unavailable"),
         message: z.string(),
       }).strict(),
     ]),
+  },
+  workout_scratchpad: {
+    input: z.object({
+      legacyContent: z.string().max(MAX_WORKOUT_SCRATCHPAD_LENGTH).optional(),
+    }).strict(),
+    output: z.object({ content: z.string().max(MAX_WORKOUT_SCRATCHPAD_LENGTH) }).strict(),
+  },
+  save_workout_scratchpad: {
+    input: z.object({ content: z.string().max(MAX_WORKOUT_SCRATCHPAD_LENGTH) }).strict(),
+    output: z.object({ ok: z.literal(true) }).strict(),
   },
   prompt_history: {
     input: z.object({}).strict(),
@@ -297,8 +329,32 @@ function parseGeneratedSummary(output: string): z.infer<typeof generatedSummaryS
   return null;
 }
 
+function validUsageSamples(value: unknown, observedAt: number): UsageSample[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    const parsed = usageSampleSchema.safeParse(candidate);
+    return parsed.success && parsed.data.observedAt <= observedAt ? [parsed.data] : [];
+  });
+}
+
+function mergeUsageSamples(
+  stored: unknown,
+  legacy: readonly UsageSample[],
+  observedAt: number,
+): UsageSample[] {
+  const sorted = [
+    ...validUsageSamples(stored, observedAt),
+    ...validUsageSamples(legacy, observedAt),
+  ].sort((left, right) => left.observedAt - right.observedAt);
+  return sorted.filter((sample, index) => {
+    const previous = sorted[index - 1];
+    return previous === undefined
+      || previous.resetsAt !== sample.resetsAt
+      || previous.usedPercent !== sample.usedPercent;
+  });
+}
+
 export default function plugin(bb: BbPluginApi) {
-  registerThreadflowWaits(bb, { excludedThreadTitlePrefixes: [SUMMARY_WORKER_TITLE_PREFIX] });
   const settings = bb.settings.define({
     completionAlert: {
       type: "select",
@@ -306,6 +362,16 @@ export default function plugin(bb: BbPluginApi) {
       options: ["Off", "Chime", "Voice"],
       default: "Chime",
     },
+    githubToken: {
+      type: "string",
+      label: "GitHub token",
+      description: "Fine-grained token with Actions read access, required for waits on private repositories.",
+      secret: true,
+    },
+  });
+  registerThreadflowWaits(bb, {
+    excludedThreadTitlePrefixes: [SUMMARY_WORKER_TITLE_PREFIX],
+    getGithubToken: async () => (await settings.get()).githubToken,
   });
   const viewingThreads = new Map<string, string>();
   const summariesInFlight = new Set<string>();
@@ -318,6 +384,12 @@ export default function plugin(bb: BbPluginApi) {
   let completionAlertTimer: ReturnType<typeof setTimeout> | null = null;
   let completionAlertMonitorRunning = false;
   let completionAlertChecks = Promise.resolve();
+  let kvMutationTail = Promise.resolve();
+  const serializeKvMutation = <T>(operation: () => Promise<T>): Promise<T> => {
+    const result = kvMutationTail.then(operation, operation);
+    kvMutationTail = result.then(() => undefined, () => undefined);
+    return result;
+  };
   const publishThreadsChanged = () => bb.realtime.publish(THREADS_CHANGED_CHANNEL, null);
   const publishSummaryChanged = (threadId: string) => bb.realtime.publish(SUMMARIES_CHANGED_CHANNEL, { threadId });
   const publishHandoffChanged = (threadId: string, status: "sent" | "failed", message?: string) => {
@@ -968,7 +1040,7 @@ export default function plugin(bb: BbPluginApi) {
       publishThreadsChanged();
       return { archived };
     },
-    codex_usage: async () => {
+    codex_usage: async ({ dayStartedAt, legacySamples = [] }) => {
       let timeout: ReturnType<typeof setTimeout> | undefined;
       const usage = await Promise.race([
         bb.sdk.system.usageLimits({ providerId: "codex" }),
@@ -983,10 +1055,36 @@ export default function plugin(bb: BbPluginApi) {
       }
       const codexUsage = usage.codex;
       if (codexUsage?.status === "ok") {
+        const windows = codexUsage.windows.map(({ label, resetsAt, usedPercent }) => ({
+          label,
+          resetsAt,
+          usedPercent,
+        }));
+        const weeklyWindow = windows.find((window) => /week|7\s*d/i.test(window.label))
+          ?? windows.at(-1)
+          ?? null;
+        const todayUsage = weeklyWindow === null
+          ? null
+          : await serializeKvMutation(async () => {
+            const current: UsageSample = {
+              observedAt: Date.now(),
+              resetsAt: weeklyWindow.resetsAt,
+              usedPercent: weeklyWindow.usedPercent,
+            };
+            const samples = mergeUsageSamples(
+              await bb.storage.kv.get<unknown>(USAGE_SAMPLES_KEY),
+              legacySamples,
+              current.observedAt,
+            );
+            const estimate = calculateTodayUsedPercent({ samples, current, dayStartedAt });
+            await bb.storage.kv.set(USAGE_SAMPLES_KEY, appendUsageSample(samples, current));
+            return estimate;
+          });
         return {
           status: "ok" as const,
           planLabel: codexUsage.planLabel,
-          windows: codexUsage.windows.map(({ label, resetsAt, usedPercent }) => ({ label, resetsAt, usedPercent })),
+          windows,
+          todayUsage,
         };
       }
       const message = codexUsage?.status === "error"
@@ -996,6 +1094,20 @@ export default function plugin(bb: BbPluginApi) {
           : "Codex usage unavailable";
       return { status: "unavailable" as const, message };
     },
+    workout_scratchpad: async ({ legacyContent }) => serializeKvMutation(async () => {
+      const stored = await bb.storage.kv.get<unknown>(WORKOUT_SCRATCHPAD_KEY);
+      if (typeof stored === "string" && stored.length <= MAX_WORKOUT_SCRATCHPAD_LENGTH) {
+        return { content: stored };
+      }
+      const content = legacyContent ?? "";
+      if (content !== "") await bb.storage.kv.set(WORKOUT_SCRATCHPAD_KEY, content);
+      return { content };
+    }),
+    save_workout_scratchpad: async ({ content }) => serializeKvMutation(async () => {
+      if (content === "") await bb.storage.kv.delete(WORKOUT_SCRATCHPAD_KEY);
+      else await bb.storage.kv.set(WORKOUT_SCRATCHPAD_KEY, content);
+      return { ok: true as const };
+    }),
     prompt_history: async () => {
       const [active, archived] = await Promise.all([
         bb.sdk.threads.list({ archived: false, includeHidden: false, limit: 20 }),

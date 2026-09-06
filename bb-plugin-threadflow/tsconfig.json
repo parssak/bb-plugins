@@ -24,6 +24,7 @@
   "include": [
     "server.ts",
     "wait-service.ts",
+    "github-workflow-run.ts",
     "app.tsx"
   ]
 }

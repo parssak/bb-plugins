@@ -12,6 +12,9 @@ import {
 import { registerThreadflowWaits, WAIT_CHECKER_TITLE_PREFIX } from "./wait-service.ts";
 
 const PLUGIN_ID = "threadflow-test";
+const MINUTE_MS = 60_000;
+const GITHUB_RUN_URL = "https://github.com/use-bogi/usebogi.com/actions/runs/33998698980";
+const GITHUB_HEAD_SHA = "28b49da5b1ef555d3b125bbf8ca49e80fa1ae4a2";
 
 function createWaitHost() {
   const sleepingThread = makeThreadResponse({
@@ -40,6 +43,17 @@ function createWaitHost() {
   const spawnedWith = [];
   let nextQueueId = 1;
   let pullRequestState = "open";
+  let checkerOutput = '{"decision":"ready","evidence":"The dependency is available."}';
+  let githubRun = {
+    owner: "use-bogi",
+    repository: "usebogi.com",
+    runId: 33_998_698_980,
+    runUrl: GITHUB_RUN_URL,
+    workflowName: "Deploy Sandbox",
+    headSha: GITHUB_HEAD_SHA,
+    status: "in_progress",
+    conclusion: null,
+  };
 
   const host = createFakePluginHost({
     pluginId: PLUGIN_ID,
@@ -81,6 +95,14 @@ function createWaitHost() {
           list: async () => [...queuedRows],
         },
         spawn: async (args) => {
+          if (args.startedOnBehalfOf !== null && args.startedOnBehalfOf !== undefined) {
+            if (args.sourceThreadId === undefined && args.parentThreadId === undefined) {
+              throw new Error("startedOnBehalfOf requires a sourceThreadId or parentThreadId");
+            }
+            if (args.originKind === null || args.originKind === undefined) {
+              throw new Error("startedOnBehalfOf requires an originKind");
+            }
+          }
           spawnedWith.push(args);
           return workerThread;
         },
@@ -90,7 +112,7 @@ function createWaitHost() {
           thread: workerThread,
           threadId: workerThread.id,
         }),
-        output: async () => ({ output: '{"decision":"ready","evidence":"The dependency is available."}' }),
+        output: async () => ({ output: checkerOutput }),
         archive: async () => ({ archivedThreadIds: [workerThread.id] }),
         stop: async () => ({ ok: true }),
       },
@@ -114,7 +136,13 @@ function createWaitHost() {
       },
     },
   });
-  registerThreadflowWaits(host.bb, { excludedThreadTitlePrefixes: ["TLDR worker:"] });
+  registerThreadflowWaits(host.bb, {
+    excludedThreadTitlePrefixes: ["TLDR worker:"],
+    inspectGithubWorkflowRun: async (identity) => {
+      assert.equal(identity.runUrl, GITHUB_RUN_URL);
+      return { ...githubRun };
+    },
+  });
   return {
     ...host,
     queuedRows,
@@ -124,6 +152,12 @@ function createWaitHost() {
     workerThread,
     setPullRequestState(state) {
       pullRequestState = state;
+    },
+    setCheckerOutput(output) {
+      checkerOutput = output;
+    },
+    setGithubRun(update) {
+      githubRun = { ...githubRun, ...update };
     },
   };
 }
@@ -143,6 +177,14 @@ async function waitForRecheck(harness) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   assert.ok(harness.inspection.recheckCount > 0, "wait monitor did not request a dispatch recheck");
+}
+
+async function waitUntil(predicate, message) {
+  const deadline = Date.now() + 2_000;
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(predicate(), message);
 }
 
 test("threadflow waits are atomic, durable across reload, and released by target events", async () => {
@@ -247,6 +289,50 @@ test("pull request waits stay bound to the PR resolved when armed", async () => 
   await state.harness.lifecycle.dispose();
 });
 
+test("GitHub Actions waits inspect exact runs directly without spawning an agent", async () => {
+  const state = createWaitHost();
+  const result = await state.harness.behavior.callAgentTool("threadflow_wait", {
+    condition: { kind: "github_actions_succeeded", runUrls: [GITHUB_RUN_URL] },
+    timeoutMinutes: 60,
+    resumePrompt: "Test the deployed sandbox now.",
+  }, { threadId: state.sleepingThread.id });
+  assert.match(String(result), /Deploy Sandbox/);
+  assert.equal(state.spawnedWith.length, 0);
+
+  state.setGithubRun({ status: "completed", conclusion: "success" });
+  state.bb.storage.database().prepare("UPDATE threadflow_waits SET next_check_at = 0").run();
+  const service = state.harness.behavior.runService("threadflow-wait-monitor");
+  await waitForRecheck(state.harness);
+  service.controller.abort();
+  await service.done;
+
+  assert.equal(state.queuedRows[0].content[0].text, "Test the deployed sandbox now.");
+  assert.equal(state.spawnedWith.length, 0);
+  await state.harness.lifecycle.dispose();
+});
+
+test("GitHub Actions waits wake on a terminal non-success conclusion", async () => {
+  const state = createWaitHost();
+  await state.harness.behavior.callAgentTool("threadflow_wait", {
+    condition: { kind: "github_actions_succeeded", runUrls: [GITHUB_RUN_URL] },
+    timeoutMinutes: 60,
+    resumePrompt: "Test the deployed sandbox now.",
+  }, { threadId: state.sleepingThread.id });
+  state.setGithubRun({ status: "completed", conclusion: "failure" });
+  state.bb.storage.database().prepare("UPDATE threadflow_waits SET next_check_at = 0").run();
+
+  const service = state.harness.behavior.runService("threadflow-wait-monitor");
+  await waitForRecheck(state.harness);
+  service.controller.abort();
+  await service.done;
+
+  const row = state.bb.storage.database().prepare("SELECT result_json FROM threadflow_waits").get();
+  assert.match(row.result_json, /condition_impossible/);
+  assert.match(row.result_json, /conclusion failure/);
+  assert.equal(state.spawnedWith.length, 0);
+  await state.harness.lifecycle.dispose();
+});
+
 test("instruction waits use a hidden Spark checker and do not expose wait tools to helper agents", async () => {
   const state = createWaitHost();
   const normalConfig = await state.harness.behavior.resolveAgentConfiguration(
@@ -278,7 +364,46 @@ test("instruction waits use a hidden Spark checker and do not expose wait tools 
   assert.equal(state.spawnedWith[0].reasoningLevel, "low");
   assert.equal(state.spawnedWith[0].permissionMode, "auto");
   assert.equal(state.spawnedWith[0].visibility, "hidden");
+  assert.equal(state.spawnedWith[0].startedOnBehalfOf, undefined);
   assert.equal(state.harness.inspection.sdk.callsTo("threads.archive").length, 1);
   assert.equal(state.harness.inspection.sdk.callsTo("threads.stop").length, 1);
+  await state.harness.lifecycle.dispose();
+});
+
+test("instruction waits first check at twenty minutes and then every forty-five minutes", async () => {
+  const state = createWaitHost();
+  state.setCheckerOutput('{"decision":"wait","evidence":"The dependency is still pending."}');
+  const armedAt = Date.now();
+  await state.harness.behavior.callAgentTool("threadflow_wait", {
+    condition: { kind: "instruction", instruction: "The dependency is available." },
+    timeoutMinutes: 120,
+    resumePrompt: "Continue when the dependency is available.",
+  }, { threadId: state.sleepingThread.id });
+
+  const initial = state.bb.storage.database().prepare(
+    "SELECT next_check_at FROM threadflow_waits WHERE thread_id = ?",
+  ).get(state.sleepingThread.id);
+  assert.ok(initial.next_check_at >= armedAt + 20 * MINUTE_MS);
+  assert.ok(initial.next_check_at <= Date.now() + 20 * MINUTE_MS);
+
+  state.bb.storage.database().prepare(
+    "UPDATE threadflow_waits SET next_check_at = 0 WHERE thread_id = ?",
+  ).run(state.sleepingThread.id);
+  const checkedAt = Date.now();
+  const service = state.harness.behavior.runService("threadflow-wait-monitor");
+  await waitUntil(() => {
+    const row = state.bb.storage.database().prepare(
+      "SELECT next_check_at FROM threadflow_waits WHERE thread_id = ?",
+    ).get(state.sleepingThread.id);
+    return row.next_check_at >= checkedAt + 45 * MINUTE_MS;
+  }, "instruction wait was not rescheduled");
+  service.controller.abort();
+  await service.done;
+
+  const recheck = state.bb.storage.database().prepare(
+    "SELECT next_check_at FROM threadflow_waits WHERE thread_id = ?",
+  ).get(state.sleepingThread.id);
+  assert.ok(recheck.next_check_at <= Date.now() + 45 * MINUTE_MS);
+  assert.equal(state.harness.inspection.recheckCount, 0);
   await state.harness.lifecycle.dispose();
 });
