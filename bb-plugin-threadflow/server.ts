@@ -95,6 +95,7 @@ const nativeThreadSchema = z.object({
   needsAttention: z.boolean(),
   queuedWork: z.enum(["none", "waiting", "failed"]),
   scheduledSendAt: z.number().nullable(),
+  waitingForThreadIds: z.array(z.string()),
   status: z.string(),
   sideChats: z.array(sideChatSchema),
 });
@@ -1040,6 +1041,10 @@ export default function plugin(bb: BbPluginApi) {
           scheduledSendAtByThread.set(entry.threadId, entry.sendAt);
         }
       }
+      const idleDependenciesByThread = new Map(
+        threadflowWaits.getIdleDependencies(new Set(queuedMessages.map((entry) => entry.id)))
+          .map((dependency) => [dependency.waitingThreadId, dependency.targetThreadIds]),
+      );
       const sideChatsBySource = new Map<string, NativeSideChat[]>();
       for (const sideChat of activeSideChats) {
         const running = isRunningStatus(sideChat.status);
@@ -1081,6 +1086,7 @@ export default function plugin(bb: BbPluginApi) {
             && thread.queuedWork === "waiting"
             ? scheduledSendAtByThread.get(thread.id) ?? null
             : null,
+          waitingForThreadIds: idleDependenciesByThread.get(thread.id) ?? [],
           status: thread.status,
           sideChats: sideChatsBySource.get(thread.id) ?? [],
         }))

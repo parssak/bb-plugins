@@ -111,6 +111,10 @@ export type ActiveThreadflowWait = z.infer<typeof activeThreadflowWaitSchema>;
 
 export type ThreadflowWaitController = {
   getActiveWait(threadId: string): Promise<ActiveThreadflowWait | null>;
+  getIdleDependencies(queuedMessageIds: ReadonlySet<string>): Array<{
+    waitingThreadId: string;
+    targetThreadIds: string[];
+  }>;
 };
 
 const waitStateSchema = z.enum([
@@ -1149,6 +1153,17 @@ export function registerThreadflowWaits(
         lastEvidence: wait.lastEvidence,
         createdAt: wait.createdAt,
       };
+    },
+    getIdleDependencies(queuedMessageIds) {
+      return listWaits("state IN ('arming', 'waiting', 'releasing', 'ready') AND condition_kind = 'threads_idle'")
+        .flatMap((wait) => wait.condition.kind === "threads_idle"
+          && wait.queuedMessageId !== null
+          && queuedMessageIds.has(wait.queuedMessageId)
+          ? [{
+              waitingThreadId: wait.threadId,
+              targetThreadIds: wait.condition.targets.map((target) => target.threadId),
+            }]
+          : []);
     },
   };
 }

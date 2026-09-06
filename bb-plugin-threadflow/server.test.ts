@@ -42,6 +42,76 @@ test("thread list RPC preserves BB's aggregate queued-work state", async () => {
   const result = await harness.behavior.callRpc("threads", { scope: "recent", query: "" });
   assert.equal(result.threads[0]?.queuedWork, "waiting");
   assert.equal(result.threads[0]?.scheduledSendAt, sendAt);
+  assert.deepEqual(result.threads[0]?.waitingForThreadIds, []);
+  await harness.lifecycle.dispose();
+});
+
+test("thread list RPC exposes active threads_idle dependencies", async () => {
+  const now = Date.now();
+  const waitingThread = {
+    ...makeThreadResponse({
+      createdAt: now,
+      id: "thread-waiting",
+      queuedWork: "waiting",
+      status: "idle",
+      title: "Coordinator",
+      updatedAt: now,
+    }),
+    hasPendingInteraction: false,
+  };
+  const dependency = {
+    ...makeThreadResponse({
+      createdAt: now,
+      id: "thread-dependency",
+      queuedWork: "none",
+      status: "active",
+      title: "Dependency",
+      updatedAt: now,
+    }),
+    hasPendingInteraction: false,
+  };
+  const queuedRows: ReturnType<typeof makeQueueEntry>[] = [];
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "threadflow-dependencies-test",
+    sdk: {
+      threads: {
+        get: async ({ threadId }) => threadId === waitingThread.id ? waitingThread : dependency,
+        list: async ({ archived, includeHidden }) => (
+          archived === false && includeHidden === false ? [waitingThread, dependency] : []
+        ),
+        send: async ({ threadId, input }) => {
+          const queuedMessage = makeQueueEntry({
+            id: "queue-waiting",
+            threadId,
+            content: input,
+          });
+          queuedRows.push(queuedMessage);
+          return { ok: true, delivery: "queued", queuedMessage };
+        },
+        queuedMessages: { list: async ({ threadId }) => queuedRows.filter((row) => row.threadId === threadId) },
+        queue: { list: async () => queuedRows },
+      },
+      projects: { list: async () => [] },
+      providers: { list: async () => [] },
+    },
+  });
+  plugin(bb);
+  await harness.behavior.callAgentTool("threadflow_wait", {
+    condition: { kind: "threads_idle", threadIds: [dependency.id] },
+    timeoutMinutes: 60,
+    resumePrompt: "Continue when the dependency is idle.",
+  }, { threadId: waitingThread.id });
+
+  const result = await harness.behavior.callRpc("threads", { scope: "recent", query: "" });
+
+  assert.deepEqual(
+    result.threads.find((thread) => thread.id === waitingThread.id)?.waitingForThreadIds,
+    [dependency.id],
+  );
+  assert.deepEqual(
+    result.threads.find((thread) => thread.id === dependency.id)?.waitingForThreadIds,
+    [],
+  );
   await harness.lifecycle.dispose();
 });
 

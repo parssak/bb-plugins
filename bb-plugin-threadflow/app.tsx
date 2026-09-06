@@ -52,7 +52,7 @@ import { parseThreadTitleBrand, type ThreadTitleBrand } from "./thread-title-bra
 import { isThreadNudgerMessageText } from "./thread-nudger-message";
 import { formatUserMessageTimestamp, type UserMessageTimestamp } from "./user-message-timestamp";
 import { JournalMarkdownEditor } from "./journal-editor";
-import { classifyThreadListState, threadIsWorking } from "./thread-list-state";
+import { classifyThreadListState, nestWorkingThreadDependencies, threadIsWorking } from "./thread-list-state";
 import {
   formatJournalDate,
   isJournalDateKey,
@@ -1615,12 +1615,16 @@ function PullRequestProbe({
 function groupSidebarThreads(
   threads: readonly NativeThread[],
   pullRequests: Readonly<Record<string, PluginSidebarPullRequest | null>>,
-): Array<readonly [string, NativeThread[]]> {
+): {
+  groups: Array<readonly [string, NativeThread[]]>;
+  dependenciesByParentId: Map<string, NativeThread[]>;
+} {
+  const { topLevelThreads, dependenciesByParentId } = nestWorkingThreadDependencies(threads);
   const working: NativeThread[] = [];
   const waiting: NativeThread[] = [];
   const needsYou: NativeThread[] = [];
   const inReview: NativeThread[] = [];
-  for (const thread of threads) {
+  for (const thread of topLevelThreads) {
     const state = classifyThreadListState(thread);
     if (state === "working") {
       working.push(thread);
@@ -1638,7 +1642,7 @@ function groupSidebarThreads(
   if (inReview.length > 0) groups.push(["In review", inReview]);
   groups.push(["Working", working]);
   if (waiting.length > 0) groups.push(["Waiting", waiting]);
-  return groups;
+  return { groups, dependenciesByParentId };
 }
 
 function BackgroundCommandIndicator({ count }: { count: number }) {
@@ -2452,8 +2456,13 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
       },
     ).finally(() => reviewsInFlightRef.current.delete(reviewKey));
   }, [rpc]);
-  const groups = useMemo(() => groupSidebarThreads(threads, pullRequests), [pullRequests, threads]);
-  const flatThreads = useMemo(() => groups.flatMap(([, groupThreads]) => groupThreads), [groups]);
+  const { groups, dependenciesByParentId } = useMemo(
+    () => groupSidebarThreads(threads, pullRequests),
+    [pullRequests, threads],
+  );
+  const flatThreads = useMemo(() => groups.flatMap(([, groupThreads]) => (
+    groupThreads.flatMap((thread) => [thread, ...(dependenciesByParentId.get(thread.id) ?? [])])
+  )), [dependenciesByParentId, groups]);
   const nativeThreadById = useMemo(
     () => new Map(nativeSidebarThreads.map((thread) => [thread.id, thread])),
     [nativeSidebarThreads],
@@ -2731,6 +2740,22 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
     };
   }, [flatThreads, focusSidebarRow, openSidebarTarget, runThreadCommand, selectedThreadId]);
 
+  const renderThreadRow = (thread: NativeThread, showWorkingDuration: boolean) => (
+    <SidebarThreadRow
+      key={thread.id}
+      thread={thread}
+      backgroundCommands={nativeThreadById.get(thread.id)?.activity.backgroundCommands ?? 0}
+      pullRequest={pullRequests[thread.id] ?? null}
+      shortcutNumber={flatThreads.indexOf(thread) + 1}
+      selectedThreadId={selectedThreadId}
+      onOpen={(candidate) => openThread(candidate.id)}
+      onOpenSideChat={(sideChat) => openSideChat(sideChat)}
+      onCloseSideChat={closeSideChat}
+      onRename={renameThread}
+      showWorkingDuration={showWorkingDuration}
+    />
+  );
+
   return (
     <div
       ref={listRef}
@@ -2767,21 +2792,19 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
                 </div>
               )}
               {title === "Waiting" && waitingCollapsed ? null : <div className="space-y-0.5">
-                {groupThreads.map((thread) => (
-                  <SidebarThreadRow
-                    key={thread.id}
-                    thread={thread}
-                    backgroundCommands={nativeThreadById.get(thread.id)?.activity.backgroundCommands ?? 0}
-                    pullRequest={pullRequests[thread.id] ?? null}
-                    shortcutNumber={flatThreads.indexOf(thread) + 1}
-                    selectedThreadId={selectedThreadId}
-                    onOpen={(candidate) => openThread(candidate.id)}
-                    onOpenSideChat={(sideChat) => openSideChat(sideChat)}
-                    onCloseSideChat={closeSideChat}
-                    onRename={renameThread}
-                    showWorkingDuration={title === "Working"}
-                  />
-                ))}
+                {groupThreads.map((thread) => {
+                  const dependencies = dependenciesByParentId.get(thread.id) ?? [];
+                  return (
+                    <div key={thread.id}>
+                      {renderThreadRow(thread, title === "Working")}
+                      {dependencies.length === 0 ? null : (
+                        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border/60 pl-1.5">
+                          {dependencies.map((dependency) => renderThreadRow(dependency, true))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>}
             </section>
           ))}
