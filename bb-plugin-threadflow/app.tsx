@@ -1931,7 +1931,9 @@ function SidebarThreadRow({
 function JournalSidebarNavigation({
   items,
   activeItemId,
+  isCompactViewport,
   experimental_activate: activate,
+  experimental_Original: Original,
 }: ExperimentalSidebarNavigationProps) {
   const rpc = useRpc<typeof rpcContract>();
   const [threads, setThreads] = useState<NativeThread[]>([]);
@@ -1982,6 +1984,7 @@ function JournalSidebarNavigation({
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [activate, journalItem]);
 
+  if (isCompactViewport) return <Original />;
   if (journalItem === undefined || headerTarget === null) return null;
   const isActive = activeItemId === journalItem.id;
   const allWorkIsRunning = threads.length > 0 && threads.every(threadIsWorking);
