@@ -39,3 +39,15 @@ export function shiftJournalDateKey(dateKey: string, days: number): string {
   const date = new Date(year, month - 1, day + days, 12);
   return localJournalDateKey(date);
 }
+
+export function formatJournalDayGroup(
+  timestamp: number,
+  locales: Intl.LocalesArgument = "en-US",
+  currentDate = new Date(),
+): string {
+  const dateKey = localJournalDateKey(new Date(timestamp));
+  const todayKey = localJournalDateKey(currentDate);
+  if (dateKey === todayKey) return "Today";
+  if (dateKey === shiftJournalDateKey(todayKey, -1)) return "Yesterday";
+  return formatJournalDate(dateKey, locales, currentDate);
+}

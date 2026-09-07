@@ -46,6 +46,46 @@ test("thread list RPC preserves BB's aggregate queued-work state", async () => {
   await harness.lifecycle.dispose();
 });
 
+test("thread history exposes archive time and can restore a thread", async () => {
+  const archivedAt = Date.now() - 1_000;
+  const archivedThread = {
+    ...makeThreadResponse({
+      id: "thread-archived",
+      title: "Finished work",
+      archivedAt,
+      queuedWork: "none",
+      updatedAt: archivedAt,
+    }),
+    hasPendingInteraction: false,
+  };
+  let unarchivedThreadId: string | null = null;
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "threadflow-history-test",
+    sdk: {
+      threads: {
+        get: async () => archivedThread,
+        list: async ({ archived }) => archived ? [archivedThread] : [],
+        queue: { list: async () => [] },
+        unarchive: async ({ threadId }) => {
+          unarchivedThreadId = threadId;
+          return { ok: true };
+        },
+      },
+      projects: { list: async () => [] },
+      providers: { list: async () => [] },
+    },
+  });
+  plugin(bb);
+
+  const result = await harness.behavior.callRpc("threads", { scope: "all", query: "" });
+  assert.equal(result.threads[0]?.archivedAt, archivedAt);
+  assert.deepEqual(await harness.behavior.callRpc("toggle_archived", { id: archivedThread.id }), {
+    archived: false,
+  });
+  assert.equal(unarchivedThreadId, archivedThread.id);
+  await harness.lifecycle.dispose();
+});
+
 test("thread list nests every active child under its canonical parent", async () => {
   const now = Date.now();
   const pluginId = "threadflow-review-sidebar-test";

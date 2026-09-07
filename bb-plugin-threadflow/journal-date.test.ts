@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  formatJournalDayGroup,
   formatJournalDate,
   isJournalDateKey,
   localJournalDateKey,
@@ -29,4 +30,11 @@ test("moves between local calendar days", () => {
   assert.equal(shiftJournalDateKey("2026-09-05", -1), "2026-09-04");
   assert.equal(shiftJournalDateKey("2026-03-01", -1), "2026-02-28");
   assert.equal(shiftJournalDateKey("2024-02-28", 1), "2024-02-29");
+});
+
+test("formats history groups relative to the viewer's local day", () => {
+  const currentDate = new Date(2026, 8, 7, 12);
+  assert.equal(formatJournalDayGroup(new Date(2026, 8, 7, 1).getTime(), "en-US", currentDate), "Today");
+  assert.equal(formatJournalDayGroup(new Date(2026, 8, 6, 23).getTime(), "en-US", currentDate), "Yesterday");
+  assert.equal(formatJournalDayGroup(new Date(2026, 8, 5, 12).getTime(), "en-US", currentDate), "Sat, Sep 05");
 });

@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  ArchiveRestoreIcon,
   File01Icon,
+  HistoryIcon,
   Message01Icon,
 } from "@hugeicons/core-free-icons";
 import {
@@ -56,6 +58,7 @@ import { formatUserMessageTimestamp, type UserMessageTimestamp } from "./user-me
 import { JournalMarkdownEditor } from "./journal-editor";
 import { classifyThreadListState, nestWorkingThreadDependencies, threadIsWorking } from "./thread-list-state";
 import {
+  formatJournalDayGroup,
   formatJournalDate,
   isJournalDateKey,
   localJournalDateKey,
@@ -92,6 +95,29 @@ const ASK_LINUS_PROMPT = "how would linus torvalds feel about this";
 const LEGACY_USAGE_SAMPLES_STORAGE_KEY = "threadflow:codex-usage-samples:v1";
 const MAX_LEGACY_USAGE_SAMPLES = 2_048;
 const WAITING_COLLAPSED_STORAGE_KEY = "threadflow:waiting-collapsed:v1";
+type SidebarMode = "threads" | "history";
+let sidebarMode: SidebarMode = "threads";
+const sidebarModeListeners = new Set<() => void>();
+
+function setSidebarMode(mode: SidebarMode) {
+  if (sidebarMode === mode) return;
+  sidebarMode = mode;
+  for (const listener of sidebarModeListeners) listener();
+}
+
+function subscribeSidebarMode(listener: () => void) {
+  sidebarModeListeners.add(listener);
+  return () => sidebarModeListeners.delete(listener);
+}
+
+function useSidebarMode(): SidebarMode {
+  return useSyncExternalStore(
+    subscribeSidebarMode,
+    () => sidebarMode,
+    () => "threads",
+  );
+}
+
 const BB_LOGO_DATA_URL = "data:image/webp;base64,"
   + "UklGRqwDAABXRUJQVlA4TKADAAAvL8ALEJUGQbbN66+9nCEiJmANn1izbSRJUf5Rt3OzR/9vHz1TBKMAYJQc7pJB+0CbNVkBnhTY"
   + "E9cW64CDI7eNHImeueWwrn2DbEmyTdt6t7m5ONexbdu2bfuca9u2bdu2bdvWwlxx/8A6EhAU+T/aBPSfgdtGirzHDJ19RFm6oGDg4"
@@ -1939,6 +1965,7 @@ function JournalSidebarNavigation({
   experimental_Original: Original,
 }: ExperimentalSidebarNavigationProps) {
   const rpc = useRpc<typeof rpcContract>();
+  const mode = useSidebarMode();
   const [threads, setThreads] = useState<NativeThread[]>([]);
   const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
   const journalItem = items.find((item) => item.action.kind === "open-plugin-panel"
@@ -1995,21 +2022,37 @@ function JournalSidebarNavigation({
   const label = allWorkIsRunning && !isActive
     ? "Open Journal — everything is working"
     : "Open Journal";
+  const buttonClass = "grid size-7 place-items-center rounded-md text-muted-foreground outline-none [app-region:no-drag] [-webkit-app-region:no-drag] hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40";
 
   return createPortal(
-    <button
-      type="button"
-      {...journalItem.experimental_splitProps}
-      aria-label={label}
-      title={`${label} (⌘⇧J)`}
-      aria-current={isActive ? "page" : undefined}
-      onClick={() => activate(journalItem.id, { openInSplit: false })}
-      className={highlight
-        ? "grid size-7 place-items-center rounded-md bg-blue-500/10 text-blue-500 outline-none [app-region:no-drag] [-webkit-app-region:no-drag] hover:bg-blue-500/15 focus-visible:ring-1 focus-visible:ring-blue-500/50"
-        : "grid size-7 place-items-center rounded-md text-muted-foreground outline-none [app-region:no-drag] [-webkit-app-region:no-drag] hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"}
-    >
-      <HugeiconsIcon icon={File01Icon} className="size-4" aria-hidden />
-    </button>,
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        aria-label={mode === "history" ? "Show active threads" : "Show archived threads"}
+        title={mode === "history" ? "Show active threads" : "Show archived threads"}
+        aria-pressed={mode === "history"}
+        onClick={() => setSidebarMode(mode === "history" ? "threads" : "history")}
+        className={mode === "history" ? `${buttonClass} bg-muted text-foreground` : buttonClass}
+      >
+        <HugeiconsIcon icon={HistoryIcon} className="size-4" aria-hidden />
+      </button>
+      <button
+        type="button"
+        {...journalItem.experimental_splitProps}
+        aria-label={label}
+        title={`${label} (⌘⇧J)`}
+        aria-current={isActive ? "page" : undefined}
+        onClick={() => {
+          setSidebarMode("threads");
+          activate(journalItem.id, { openInSplit: false });
+        }}
+        className={highlight
+          ? `${buttonClass} bg-blue-500/10 text-blue-500 hover:bg-blue-500/15 focus-visible:ring-blue-500/50`
+          : buttonClass}
+      >
+        <HugeiconsIcon icon={File01Icon} className="size-4" aria-hidden />
+      </button>
+    </div>,
     headerTarget,
   );
 }
@@ -2444,7 +2487,119 @@ function SidebarFooter() {
   );
 }
 
-function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps) {
+function ArchivedThreadList({ onNavigate }: PluginThreadListProps) {
+  const rpc = useRpc<typeof rpcContract>();
+  const navigate = useBbNavigate();
+  const [threads, setThreads] = useState<NativeThread[]>([]);
+  const [restoringThreadIds, setRestoringThreadIds] = useState<Set<string>>(() => new Set());
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await rpc.call("threads", { scope: "all", query: "" });
+      setThreads(result.threads
+        .filter((thread) => thread.archived)
+        .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt)));
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [rpc]);
+
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+  useRealtime(THREADS_CHANGED_CHANNEL, () => void refresh());
+
+  const groups = useMemo(() => {
+    const grouped = new Map<string, NativeThread[]>();
+    for (const thread of threads) {
+      const label = formatJournalDayGroup(thread.archivedAt ?? thread.updatedAt);
+      const group = grouped.get(label) ?? [];
+      group.push(thread);
+      grouped.set(label, group);
+    }
+    return [...grouped.entries()];
+  }, [threads]);
+
+  const restore = useCallback(async (thread: NativeThread) => {
+    setRestoringThreadIds((current) => new Set(current).add(thread.id));
+    try {
+      await rpc.call("toggle_archived", { id: thread.id });
+      setThreads((current) => current.filter((candidate) => candidate.id !== thread.id));
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setRestoringThreadIds((current) => {
+        const next = new Set(current);
+        next.delete(thread.id);
+        return next;
+      });
+    }
+  }, [rpc]);
+
+  return (
+    <div className="flex min-h-full flex-col px-2 pb-3 pt-1">
+      <div className="sticky top-0 z-10 flex items-center justify-between bg-sidebar py-2">
+        <span className="text-xs font-medium text-sidebar-foreground">Archived</span>
+        <button
+          type="button"
+          onClick={() => setSidebarMode("threads")}
+          className="rounded-md px-2 py-1 text-xs text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+        >
+          Back to threads
+        </button>
+      </div>
+      {error === null ? null : <p className="px-1 py-2 text-xs text-destructive">{error}</p>}
+      {groups.length === 0 && error === null ? (
+        <p className="px-1 py-8 text-center text-xs text-muted-foreground">No archived threads</p>
+      ) : groups.map(([label, groupThreads]) => (
+        <section key={label} className="mb-3">
+          <h2 className="px-1 pb-1 pt-2 text-xs font-medium text-muted-foreground">{label}</h2>
+          <div className="space-y-0.5">
+            {groupThreads.map((thread) => {
+              const restoring = restoringThreadIds.has(thread.id);
+              return (
+                <div key={thread.id} className="flex items-center gap-1 rounded-md hover:bg-muted/50">
+                  <button
+                    type="button"
+                    data-threadflow-row
+                    data-thread-id={thread.id}
+                    data-sidebar-thread-shortcut-target=""
+                    data-sidebar-thread-id={thread.id}
+                    onClick={() => {
+                      navigate.toThread(thread.id);
+                      onNavigate();
+                    }}
+                    className="min-w-0 flex-1 px-1.5 py-1 text-left outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+                  >
+                    <span className="block truncate text-xs text-sidebar-foreground">{thread.title}</span>
+                    <span className="block truncate text-xs text-muted-foreground">{thread.project}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Unarchive ${thread.title}`}
+                    title="Unarchive"
+                    disabled={restoring}
+                    onClick={() => void restore(thread)}
+                    className="grid size-7 shrink-0 place-items-center rounded-md text-muted-foreground outline-none hover:bg-background hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40 disabled:opacity-40"
+                  >
+                    <HugeiconsIcon icon={ArchiveRestoreIcon} className="size-4" aria-hidden />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps) {
   const rpc = useRpc<typeof rpcContract>();
   const { threads: nativeSidebarThreads } = experimental_useSidebarThreads();
   const actions = experimental_useSidebarThreadActions();
@@ -2876,6 +3031,11 @@ function CompactThreadList({ activeThreadId, onNavigate }: PluginThreadListProps
       <SidebarFooter />
     </div>
   );
+}
+
+function CompactThreadList(props: PluginThreadListProps) {
+  const mode = useSidebarMode();
+  return mode === "history" ? <ArchivedThreadList {...props} /> : <ActiveThreadList {...props} />;
 }
 
 export default definePluginApp((app) => {
