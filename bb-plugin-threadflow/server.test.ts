@@ -46,6 +46,69 @@ test("thread list RPC preserves BB's aggregate queued-work state", async () => {
   await harness.lifecycle.dispose();
 });
 
+test("thread list keeps completed automatic reviews nested under their source", async () => {
+  const now = Date.now();
+  const pluginId = "threadflow-review-sidebar-test";
+  const sourceThread = {
+    ...makeThreadResponse({
+      id: "thread-source",
+      createdAt: now,
+      updatedAt: now,
+      queuedWork: "none",
+    }),
+    hasPendingInteraction: false,
+  };
+  const reviewThread = {
+    ...makeThreadResponse({
+      id: "thread-review",
+      createdAt: now + 1,
+      updatedAt: now + 2,
+      sourceThreadId: sourceThread.id,
+      parentThreadId: sourceThread.id,
+      title: "Review",
+      visibility: "hidden",
+      originKind: "fork",
+      originPluginId: pluginId,
+      status: "idle",
+    }),
+    hasPendingInteraction: false,
+  };
+  const ordinaryIdleSideChat = {
+    ...reviewThread,
+    id: "thread-idle-side-chat",
+    title: "Side chat 2",
+  };
+  const { bb, harness } = createFakePluginHost({
+    pluginId,
+    sdk: {
+      threads: {
+        list: async ({ archived, includeHidden, originKind }) => {
+          if (archived === false && includeHidden === false) return [sourceThread];
+          if (archived === false && includeHidden === true && originKind === "fork") {
+            return [reviewThread, ordinaryIdleSideChat];
+          }
+          return [];
+        },
+        queue: { list: async () => [] },
+      },
+      projects: { list: async () => [] },
+      providers: { list: async () => [] },
+    },
+  });
+  plugin(bb);
+
+  const result = await harness.behavior.callRpc("threads", { scope: "recent", query: "" });
+  assert.deepEqual(result.threads[0]?.sideChats, [{
+    id: reviewThread.id,
+    title: "Review",
+    sourceThreadId: sourceThread.id,
+    createdAt: reviewThread.createdAt,
+    needsAttention: false,
+    running: false,
+  }]);
+  await harness.lifecycle.dispose();
+});
+
 test("thread list RPC exposes declared instruction-wait dependencies", async () => {
   const now = Date.now();
   const waitingThread = {

@@ -331,6 +331,18 @@ function isRunningStatus(status: string): boolean {
   return status !== "idle" && status !== "error";
 }
 
+function isAutomaticReviewThread(thread: {
+  title: string | null;
+  visibility: "hidden" | "visible";
+  originKind: string | null;
+  originPluginId: string | null;
+}, pluginId: string): boolean {
+  return thread.title === "Review"
+    && thread.visibility === "hidden"
+    && thread.originKind === "fork"
+    && thread.originPluginId === pluginId;
+}
+
 type ChatSummary = z.infer<typeof chatSummarySchema>;
 type PendingHandoff = { sourceThreadId: string };
 type AutomaticReviewClaim = { claimedAt: number };
@@ -969,10 +981,7 @@ export default function plugin(bb: BbPluginApi) {
       bb.log.warn(`Could not inspect handoff response ${thread.id}: ${cause instanceof Error ? cause.message : String(cause)}`);
     });
     if (
-      thread.title === "Review"
-      && thread.visibility === "hidden"
-      && thread.originKind === "fork"
-      && thread.originPluginId === bb.pluginId
+      isAutomaticReviewThread(thread, bb.pluginId)
       && thread.archivedAt === null
       && lastAssistantText !== null
       && lastAssistantText.trim() !== ""
@@ -1115,7 +1124,9 @@ export default function plugin(bb: BbPluginApi) {
       const sideChatsBySource = new Map<string, NativeSideChat[]>();
       for (const sideChat of activeSideChats) {
         const running = isRunningStatus(sideChat.status);
-        const isActive = sideChat.hasPendingInteraction || running;
+        const isActive = sideChat.hasPendingInteraction
+          || running
+          || isAutomaticReviewThread(sideChat, bb.pluginId);
         if (
           sideChat.visibility !== "hidden"
           || sideChat.sourceThreadId === null
