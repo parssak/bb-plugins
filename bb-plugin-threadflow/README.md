@@ -7,6 +7,8 @@ safe archive, drag-to-split, numbered shortcuts, and arrow-key navigation.
 Waiting follows BB's queued-work state, so scheduled sends and plugin-held waits
 share one section regardless of what condition will release them.
 Leading `[bb]` and `[bogi]` title tags render as their matching brand marks.
+Each Journal date has a persistent hidden chat in the page's right panel, seeded
+with that date's Markdown and instructions for resolving linked BB threads.
 The usage footer tracks local-time samples and highlights the portion of the
 weekly Codex allowance consumed since the user's midnight when history exists.
 

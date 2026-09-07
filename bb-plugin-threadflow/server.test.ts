@@ -230,6 +230,74 @@ test("journal entries persist by local date and empty days do not occupy storage
   await reloaded.harness.lifecycle.dispose();
 });
 
+test("journal chats persist by date and receive hidden page context", async () => {
+  const pluginId = "threadflow-journal-chat-test";
+  const dateKey = "2026-09-07";
+  const personalProject = {
+    id: "personal-project",
+    kind: "personal" as const,
+    name: "Personal",
+    createdAt: 0,
+    updatedAt: 0,
+    gitRemoteUrl: null,
+    sources: [],
+  };
+  const chatThread = makeThreadResponse({
+    id: "journal-chat-thread",
+    projectId: personalProject.id,
+    title: `Journal chat · ${dateKey}`,
+    visibility: "hidden",
+    originPluginId: pluginId,
+  });
+  const { bb, harness } = createFakePluginHost({
+    pluginId,
+    sdk: {
+      projects: { list: async () => [personalProject] },
+      threads: {
+        get: async () => chatThread,
+        spawn: async () => chatThread,
+      },
+    },
+  });
+  plugin(bb);
+  await harness.behavior.callRpc("save_journal_entry", {
+    dateKey,
+    content: "Plan the release\n\n[Review thread](threadflow://thread/thread-123)",
+  });
+
+  const results = await Promise.all([
+    harness.behavior.callRpc("journal_chat", { dateKey }),
+    harness.behavior.callRpc("journal_chat", { dateKey }),
+  ]);
+  assert.deepEqual(results, [
+    { threadId: chatThread.id },
+    { threadId: chatThread.id },
+  ]);
+  const spawnCalls = harness.inspection.sdk.callsTo("threads.spawn");
+  assert.equal(spawnCalls.length, 1);
+  const spawnArgs = spawnCalls[0]?.[0] as {
+    projectId: string;
+    environment: unknown;
+    input: Array<{ text: string; visibility?: string }>;
+    title: string;
+    visibility: string;
+  };
+  assert.equal(spawnArgs.projectId, personalProject.id);
+  assert.deepEqual(spawnArgs.environment, { type: "host", workspace: { type: "personal" } });
+  assert.equal(spawnArgs.title, `Journal chat · ${dateKey}`);
+  assert.equal(spawnArgs.visibility, "hidden");
+  assert.equal(spawnArgs.input[0]?.visibility, "agent-only");
+  assert.match(spawnArgs.input[0]?.text ?? "", /Plan the release/);
+  assert.match(spawnArgs.input[0]?.text ?? "", /bb thread show THREAD_ID --json/);
+
+  const reloaded = await harness.lifecycle.reload(plugin);
+  assert.deepEqual(await reloaded.harness.behavior.callRpc("journal_chat", { dateKey }), {
+    threadId: chatThread.id,
+  });
+  assert.equal(reloaded.harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+  await reloaded.harness.lifecycle.dispose();
+});
+
 test("journal thread statuses distinguish archived and in-progress links", async () => {
   const archived = makeThreadResponse({ id: "thread-archived", archivedAt: Date.now() });
   const working = makeThreadResponse({ id: "thread-working", status: "active" });

@@ -5,12 +5,14 @@ import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
   File01Icon,
+  Message01Icon,
 } from "@hugeicons/core-free-icons";
 import {
   Markdown,
   ThreadChat,
   UrlLink,
   definePluginApp,
+  experimental_useAppPanel,
   experimental_useSidebarThreads,
   experimental_useSidebarThreadActions,
   experimental_useSidebarThreadPullRequest,
@@ -2024,8 +2026,67 @@ function journalDateFromSubPath(subPath: string, today: string): string {
   return isJournalDateKey(subPath) ? subPath : today;
 }
 
+function JournalChatPanel({ subPath }: PluginNavPanelProps) {
+  const rpc = useRpc<typeof rpcContract>();
+  const today = useJournalToday();
+  const dateKey = journalDateFromSubPath(subPath, today);
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const loadSequenceRef = useRef(0);
+
+  const load = useCallback(async () => {
+    const sequence = loadSequenceRef.current + 1;
+    loadSequenceRef.current = sequence;
+    setThreadId(null);
+    setError(null);
+    try {
+      const result = await rpc.call("journal_chat", { dateKey });
+      if (loadSequenceRef.current !== sequence) return;
+      setThreadId(result.threadId);
+    } catch (cause) {
+      if (loadSequenceRef.current !== sequence) return;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }, [dateKey, rpc]);
+  useEffect(() => {
+    void load();
+    return () => { loadSequenceRef.current += 1; };
+  }, [load]);
+
+  if (error !== null) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center text-sm text-muted-foreground">
+        <p>Couldn’t open this journal chat.</p>
+        <Button type="button" size="sm" variant="outline" onClick={() => void load()}>Try again</Button>
+      </div>
+    );
+  }
+  if (threadId === null) {
+    return <div className="p-4 text-sm text-muted-foreground">Opening journal chat…</div>;
+  }
+  return (
+    <ThreadChat
+      threadId={threadId}
+      variant="compact"
+      layout="contained"
+      permissionPolicy="editable"
+      className="h-full min-h-0"
+    />
+  );
+}
+
+const JOURNAL_CHAT_TAB = {
+  panelId: "journal",
+  id: "chat",
+  title: "Chat",
+  icon: "MessageQuestion",
+  component: JournalChatPanel,
+  layout: "flush",
+} as const;
+
 function JournalHeader({ subPath }: PluginNavPanelProps) {
   const navigate = useBbNavigate();
+  const appPanel = experimental_useAppPanel();
   const today = useJournalToday();
   const dateKey = journalDateFromSubPath(subPath, today);
   const heading = formatJournalDate(dateKey);
@@ -2072,6 +2133,24 @@ function JournalHeader({ subPath }: PluginNavPanelProps) {
       >
         <HugeiconsIcon icon={ArrowRight01Icon} className="size-4" aria-hidden />
       </button>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        aria-label="Open journal chat"
+        title="Open journal chat"
+        className="ml-auto h-7 shrink-0 gap-1 px-2"
+        onClick={() => {
+          const opened = appPanel.openFixedTab({
+            surface: { kind: "current" },
+            tab: JOURNAL_CHAT_TAB,
+          });
+          if (!opened) toast.error("Journal chat isn’t available in this view");
+        }}
+      >
+        <HugeiconsIcon icon={Message01Icon} className="size-4" aria-hidden />
+        Chat
+      </Button>
     </div>
   );
 }
@@ -2967,6 +3046,7 @@ export default definePluginApp((app) => {
     path: "journal",
     component: JournalPage,
     headerContent: JournalHeader,
+    fixedTabs: [JOURNAL_CHAT_TAB],
   });
   app.slots.threadPanelAction({
     id: "side-chat",
