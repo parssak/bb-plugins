@@ -46,7 +46,7 @@ test("thread list RPC preserves BB's aggregate queued-work state", async () => {
   await harness.lifecycle.dispose();
 });
 
-test("thread list RPC exposes active threads_idle dependencies", async () => {
+test("thread list RPC exposes declared instruction-wait dependencies", async () => {
   const now = Date.now();
   const waitingThread = {
     ...makeThreadResponse({
@@ -97,9 +97,13 @@ test("thread list RPC exposes active threads_idle dependencies", async () => {
   });
   plugin(bb);
   await harness.behavior.callAgentTool("threadflow_wait", {
-    condition: { kind: "threads_idle", threadIds: [dependency.id] },
+    condition: {
+      kind: "instruction",
+      instruction: "Wait until the dependency has produced an acceptable result.",
+      threadIds: [dependency.id],
+    },
     timeoutMinutes: 60,
-    resumePrompt: "Continue when the dependency is idle.",
+    resumePrompt: "Continue when the dependency is acceptable.",
   }, { threadId: waitingThread.id });
 
   const result = await harness.behavior.callRpc("threads", { scope: "recent", query: "" });

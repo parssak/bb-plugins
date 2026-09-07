@@ -6,6 +6,8 @@ shows pull requests, CI, and worktree diffs; and supports dialog-based rename,
 safe archive, drag-to-split, numbered shortcuts, and arrow-key navigation.
 Waiting follows BB's queued-work state, so scheduled sends and plugin-held waits
 share one section regardless of what condition will release them.
+Working threads declared by `threads_idle` or a custom instruction's `threadIds`
+nest beneath the waiting thread instead of appearing separately.
 Leading `[bb]` and `[bogi]` title tags render as their matching brand marks.
 Each Journal date has a persistent hidden chat in the page's right panel, seeded
 with that date's Markdown and instructions for resolving linked BB threads.

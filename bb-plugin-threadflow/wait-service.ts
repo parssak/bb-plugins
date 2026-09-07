@@ -44,6 +44,10 @@ export const waitConditionSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("instruction"),
     instruction: z.string().trim().min(1).max(2_000),
+    threadIds: z.array(z.string().min(1).max(100)).min(1).max(50)
+      .refine((threadIds) => new Set(threadIds).size === threadIds.length, "Thread IDs must be unique.")
+      .optional()
+      .describe("BB threads this custom condition depends on. Declared threads appear nested beneath the waiting thread in the sidebar."),
   }).strict(),
 ]);
 
@@ -90,6 +94,10 @@ export const resolvedConditionSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("instruction"),
     instruction: z.string(),
+    targets: z.array(z.object({
+      threadId: z.string(),
+      title: z.string(),
+    }).strict()).max(50).default([]),
   }).strict(),
 ]);
 
@@ -111,7 +119,7 @@ export type ActiveThreadflowWait = z.infer<typeof activeThreadflowWaitSchema>;
 
 export type ThreadflowWaitController = {
   getActiveWait(threadId: string): Promise<ActiveThreadflowWait | null>;
-  getIdleDependencies(queuedMessageIds: ReadonlySet<string>): Array<{
+  getThreadDependencies(queuedMessageIds: ReadonlySet<string>): Array<{
     waitingThreadId: string;
     targetThreadIds: string[];
   }>;
@@ -395,8 +403,17 @@ export function registerThreadflowWaits(
     condition: WaitConditionInput,
   ): Promise<ResolvedConditionResult> => {
     if (condition.kind === "instruction") {
+      const threadIds = condition.threadIds ?? [];
+      if (threadIds.includes(sleepingThreadId)) {
+        throw new Error("A thread cannot declare itself as a wait dependency.");
+      }
+      const threads = await Promise.all(threadIds.map((threadId) => bb.sdk.threads.get({ threadId })));
       return {
-        condition,
+        condition: {
+          kind: condition.kind,
+          instruction: condition.instruction,
+          targets: threads.map((thread) => ({ threadId: thread.id, title: threadTitle(thread) })),
+        },
         label: `Waiting until: ${condition.instruction.replace(/\s+/g, " ").slice(0, 140)}`,
         alreadySatisfied: null,
       };
@@ -1146,7 +1163,7 @@ export function registerThreadflowWaits(
   bb.agents.registerTool({
     name: "threadflow_wait",
     description: "Sleep this thread until one or more BB threads are idle, another thread is archived, its current pull request is merged, exact GitHub Actions runs succeed, or a cheap read-only agent judges a custom condition ready.",
-    instructions: "Use typed conditions when possible. After an armed or already-waiting result, end the turn immediately and do not poll. Continue only when the result says the condition was already satisfied.",
+    instructions: "Use typed conditions when possible. For a custom instruction condition, include threadIds for every BB thread it depends on so the sidebar can show the relationship. After an armed or already-waiting result, end the turn immediately and do not poll. Continue only when the result says the condition was already satisfied.",
     presentation: {
       label: {
         pending: "Arming Threadflow wait",
@@ -1191,11 +1208,12 @@ export function registerThreadflowWaits(
         createdAt: wait.createdAt,
       };
     },
-    getIdleDependencies(queuedMessageIds) {
-      return listWaits("state IN ('arming', 'waiting', 'releasing', 'ready') AND condition_kind = 'threads_idle'")
-        .flatMap((wait) => wait.condition.kind === "threads_idle"
+    getThreadDependencies(queuedMessageIds) {
+      return listWaits("state IN ('arming', 'waiting', 'releasing', 'ready') AND condition_kind IN ('threads_idle', 'instruction')")
+        .flatMap((wait) => (wait.condition.kind === "threads_idle" || wait.condition.kind === "instruction")
           && wait.queuedMessageId !== null
           && queuedMessageIds.has(wait.queuedMessageId)
+          && wait.condition.targets.length > 0
           ? [{
               waitingThreadId: wait.threadId,
               targetThreadIds: wait.condition.targets.map((target) => target.threadId),

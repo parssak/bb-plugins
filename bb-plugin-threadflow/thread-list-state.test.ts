@@ -41,7 +41,7 @@ test("attention and failed queues remain needs-you states", () => {
   assert.equal(classifyThreadListState(thread({ queuedWork: "failed" })), "needs-you");
 });
 
-test("working threads awaited by threads_idle nest under the waiting thread", () => {
+test("working threads declared as wait dependencies nest under the waiting thread", () => {
   const dependency = thread({ id: "dependency", status: "active", waitingForThreadIds: [] });
   const unrelated = thread({ id: "unrelated", status: "active", waitingForThreadIds: [] });
   const parent = thread({

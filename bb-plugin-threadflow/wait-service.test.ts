@@ -502,7 +502,11 @@ test("instruction waits use a hidden Spark checker and do not expose wait tools 
   assert.deepEqual(checkerConfig.tools, []);
 
   await state.harness.behavior.callAgentTool("threadflow_wait", {
-    condition: { kind: "instruction", instruction: "The dependency is available." },
+    condition: {
+      kind: "instruction",
+      instruction: "The dependency is available.",
+      threadIds: [state.targetThread.id],
+    },
     timeoutMinutes: 60,
     resumePrompt: "Verify the dependency once, then continue.",
   }, { threadId: state.sleepingThread.id });
@@ -521,6 +525,10 @@ test("instruction waits use a hidden Spark checker and do not expose wait tools 
   assert.equal(state.spawnedWith[0].startedOnBehalfOf, undefined);
   assert.equal(state.harness.inspection.sdk.callsTo("threads.archive").length, 1);
   assert.equal(state.harness.inspection.sdk.callsTo("threads.stop").length, 1);
+  assert.deepEqual(state.waitController.getThreadDependencies(new Set([state.queuedRows[0].id])), [{
+    waitingThreadId: state.sleepingThread.id,
+    targetThreadIds: [state.targetThread.id],
+  }]);
   await state.harness.lifecycle.dispose();
 });
 
