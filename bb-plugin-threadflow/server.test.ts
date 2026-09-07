@@ -289,6 +289,7 @@ test("journal chats persist by date and receive hidden page context", async () =
   assert.equal(spawnArgs.input[0]?.visibility, "agent-only");
   assert.match(spawnArgs.input[0]?.text ?? "", /Plan the release/);
   assert.match(spawnArgs.input[0]?.text ?? "", /bb thread show THREAD_ID --json/);
+  assert.match(spawnArgs.input[0]?.text ?? "", /Always reply tersely, like a natural iMessage conversation/);
 
   const reloaded = await harness.lifecycle.reload(plugin);
   assert.deepEqual(await reloaded.harness.behavior.callRpc("journal_chat", { dateKey }), {

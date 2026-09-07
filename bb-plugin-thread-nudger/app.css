@@ -62,11 +62,11 @@
 }
 
 .thread-nudger-toggle[data-enabled="true"] .thread-nudger-switch-track {
-  background: color-mix(in oklch, var(--success) 22%, var(--canvas));
+  background: color-mix(in oklch, var(--warning) 22%, var(--canvas));
 }
 
 .thread-nudger-toggle[data-enabled="true"] .thread-nudger-switch-thumb {
-  background: var(--success);
+  background: var(--warning);
   transform: translateX(12px);
 }
 
