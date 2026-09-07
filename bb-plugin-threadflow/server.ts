@@ -42,6 +42,7 @@ const sideChatSchema = z.object({
   createdAt: z.number(),
   needsAttention: z.boolean(),
   running: z.boolean(),
+  closeable: z.boolean(),
 });
 const chatSummarySchema = z.object({
   threadId: z.string(),
@@ -647,6 +648,7 @@ export default function plugin(bb: BbPluginApi) {
         createdAt: currentThread.createdAt,
         needsAttention: false,
         running: isRunningStatus(currentThread.status),
+        closeable: true,
       },
     };
   };
@@ -1095,12 +1097,11 @@ export default function plugin(bb: BbPluginApi) {
 
   bb.rpc.register(rpcContract, {
     threads: async ({ scope, query }) => {
-      const [active, archived, activeSideChats, queuedMessages, projects, providers] = await Promise.all([
-        bb.sdk.threads.list({ archived: false, includeHidden: false, limit: MAX_THREADS_PER_STATE }),
+      const [active, archived, queuedMessages, projects, providers] = await Promise.all([
+        bb.sdk.threads.list({ archived: false, includeHidden: true, limit: MAX_THREADS_PER_STATE }),
         scope === "all"
           ? bb.sdk.threads.list({ archived: true, includeHidden: false, limit: MAX_THREADS_PER_STATE })
           : Promise.resolve([]),
-        bb.sdk.threads.list({ archived: false, includeHidden: true, originKind: "fork", limit: MAX_THREADS_PER_STATE }),
         bb.sdk.threads.queue.list(),
         bb.sdk.projects.list({ includePersonal: true }),
         bb.sdk.providers.list(),
@@ -1122,32 +1123,28 @@ export default function plugin(bb: BbPluginApi) {
           .map((dependency) => [dependency.waitingThreadId, dependency.targetThreadIds]),
       );
       const sideChatsBySource = new Map<string, NativeSideChat[]>();
-      for (const sideChat of activeSideChats) {
-        const running = isRunningStatus(sideChat.status);
-        const isActive = sideChat.hasPendingInteraction
-          || running
-          || isAutomaticReviewThread(sideChat, bb.pluginId);
+      for (const sideChat of active) {
         if (
-          sideChat.visibility !== "hidden"
-          || sideChat.sourceThreadId === null
+          sideChat.parentThreadId === null
           || sideChat.archivedAt !== null
-          || !isActive
         ) continue;
-        const chats = sideChatsBySource.get(sideChat.sourceThreadId) ?? [];
+        const chats = sideChatsBySource.get(sideChat.parentThreadId) ?? [];
         chats.push({
           id: sideChat.id,
           title: sideChat.title?.trim() || sideChat.titleFallback?.trim() || `Side chat ${chats.length + 1}`,
-          sourceThreadId: sideChat.sourceThreadId,
+          sourceThreadId: sideChat.parentThreadId,
           createdAt: sideChat.createdAt,
           needsAttention: sideChat.hasPendingInteraction,
-          running,
+          running: isRunningStatus(sideChat.status),
+          closeable: sideChat.visibility === "hidden" && sideChat.originKind === "fork",
         });
-        sideChatsBySource.set(sideChat.sourceThreadId, chats);
+        sideChatsBySource.set(sideChat.parentThreadId, chats);
       }
       for (const chats of sideChatsBySource.values()) chats.sort((a, b) => a.createdAt - b.createdAt);
 
       const threads = [...active, ...archived]
-        .filter((thread) => scope === "all" || thread.updatedAt >= cutoff)
+        .filter((thread) => thread.parentThreadId === null && thread.visibility !== "hidden")
+        .filter((thread) => scope === "all" || thread.updatedAt >= cutoff || sideChatsBySource.has(thread.id))
         .map((thread): NativeThread => ({
           id: thread.id,
           title: thread.title?.trim() || thread.titleFallback?.trim() || "Untitled",

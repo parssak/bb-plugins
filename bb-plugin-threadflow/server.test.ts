@@ -23,7 +23,7 @@ test("thread list RPC preserves BB's aggregate queued-work state", async () => {
     sdk: {
       threads: {
         list: async ({ archived, includeHidden }) => (
-          archived === false && includeHidden === false ? [scheduledThread] : []
+          archived === false && includeHidden === true ? [scheduledThread] : []
         ),
         queue: {
           list: async () => [makeQueueEntry({
@@ -46,7 +46,7 @@ test("thread list RPC preserves BB's aggregate queued-work state", async () => {
   await harness.lifecycle.dispose();
 });
 
-test("thread list keeps completed automatic reviews nested under their source", async () => {
+test("thread list nests every active child under its canonical parent", async () => {
   const now = Date.now();
   const pluginId = "threadflow-review-sidebar-test";
   const sourceThread = {
@@ -78,14 +78,34 @@ test("thread list keeps completed automatic reviews nested under their source", 
     id: "thread-idle-side-chat",
     title: "Side chat 2",
   };
+  const visibleChild = {
+    ...makeThreadResponse({
+      id: "thread-visible-child",
+      createdAt: now + 3,
+      updatedAt: now + 4,
+      parentThreadId: sourceThread.id,
+      sourceThreadId: null,
+      title: "Delegated task",
+      visibility: "visible",
+      status: "idle",
+    }),
+    hasPendingInteraction: false,
+  };
+  const hiddenRoot = makeThreadResponse({
+    id: "thread-hidden-root",
+    createdAt: now + 5,
+    updatedAt: now + 6,
+    title: "Internal worker",
+    visibility: "hidden",
+    status: "idle",
+  });
   const { bb, harness } = createFakePluginHost({
     pluginId,
     sdk: {
       threads: {
-        list: async ({ archived, includeHidden, originKind }) => {
-          if (archived === false && includeHidden === false) return [sourceThread];
-          if (archived === false && includeHidden === true && originKind === "fork") {
-            return [reviewThread, ordinaryIdleSideChat];
+        list: async ({ archived, includeHidden }) => {
+          if (archived === false && includeHidden === true) {
+            return [sourceThread, reviewThread, ordinaryIdleSideChat, visibleChild, hiddenRoot];
           }
           return [];
         },
@@ -105,7 +125,26 @@ test("thread list keeps completed automatic reviews nested under their source", 
     createdAt: reviewThread.createdAt,
     needsAttention: false,
     running: false,
+    closeable: true,
+  }, {
+    id: ordinaryIdleSideChat.id,
+    title: ordinaryIdleSideChat.title,
+    sourceThreadId: sourceThread.id,
+    createdAt: ordinaryIdleSideChat.createdAt,
+    needsAttention: false,
+    running: false,
+    closeable: true,
+  }, {
+    id: visibleChild.id,
+    title: visibleChild.title,
+    sourceThreadId: sourceThread.id,
+    createdAt: visibleChild.createdAt,
+    needsAttention: false,
+    running: false,
+    closeable: false,
   }]);
+  assert.equal(result.threads.some((thread) => thread.id === visibleChild.id), false);
+  assert.equal(result.threads.some((thread) => thread.id === hiddenRoot.id), false);
   await harness.lifecycle.dispose();
 });
 
@@ -140,7 +179,7 @@ test("thread list RPC exposes declared instruction-wait dependencies", async () 
       threads: {
         get: async ({ threadId }) => threadId === waitingThread.id ? waitingThread : dependency,
         list: async ({ archived, includeHidden }) => (
-          archived === false && includeHidden === false ? [waitingThread, dependency] : []
+          archived === false && includeHidden === true ? [waitingThread, dependency] : []
         ),
         send: async ({ threadId, input }) => {
           const queuedMessage = makeQueueEntry({
