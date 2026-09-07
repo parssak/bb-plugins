@@ -120,5 +120,5 @@ export function JournalMarkdownEditor({
     return () => editor.destroy();
   }, []);
 
-  return <div ref={hostRef} className="threadflow-journal-editor min-h-0 flex-1 overflow-y-auto" />;
+  return <div ref={hostRef} className="threadflow-journal-editor min-h-0 flex-1 overflow-y-auto px-2" />;
 }
