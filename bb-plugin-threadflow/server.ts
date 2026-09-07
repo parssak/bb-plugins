@@ -1487,9 +1487,16 @@ export default function plugin(bb: BbPluginApi) {
     worktree_changes: async ({ threadId }) => {
       const thread = await bb.sdk.threads.get({ threadId });
       if (thread.environmentId === null) return { changes: null };
-      const status = await bb.sdk.environments.status({ environmentId: thread.environmentId });
+      const [environment, status] = await Promise.all([
+        bb.sdk.environments.get({ environmentId: thread.environmentId }),
+        bb.sdk.environments.status({ environmentId: thread.environmentId }),
+      ]);
       if (status.outcome !== "available") return { changes: null };
-      const baseBranch = status.workspace.mergeBase?.mergeBaseBranch ?? status.workspace.branch.defaultBranch;
+      const baseBranch = environment.mergeBaseBranch
+        ?? environment.baseBranch
+        ?? status.workspace.mergeBase?.mergeBaseBranch
+        ?? environment.defaultBranch
+        ?? status.workspace.branch.defaultBranch;
       const result = await bb.sdk.environments.diffFiles({
         environmentId: thread.environmentId,
         target: "all",

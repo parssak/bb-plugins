@@ -157,6 +157,77 @@ test("waiting status exposes a scheduled queued continuation", async () => {
   await harness.lifecycle.dispose();
 });
 
+test("worktree changes use the environment base when status has no merge-base details", async () => {
+  const thread = makeThreadResponse({ id: "thread-changes", environmentId: "environment-changes" });
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "threadflow-worktree-changes-test",
+    sdk: {
+      threads: { get: async () => thread },
+      environments: {
+        get: async () => ({
+          baseBranch: "origin/main",
+          branchName: "bb/thread-changes",
+          createdAt: 1,
+          defaultBranch: "main",
+          hostId: "host-1",
+          id: "environment-changes",
+          isGitRepo: true,
+          isWorktree: true,
+          managed: true,
+          mergeBaseBranch: null,
+          name: null,
+          path: "/workspace",
+          projectId: "project-1",
+          status: "ready",
+          updatedAt: 1,
+          workspaceProvisionType: "managed-worktree",
+        }),
+        status: async () => ({
+          outcome: "available",
+          workspace: {
+            branch: { currentBranch: "bb/thread-changes", defaultBranch: "main" },
+            checkout: { kind: "branch", branchName: "bb/thread-changes", headSha: "abc123" },
+            mergeBase: null,
+            workingTree: {
+              deletions: 2,
+              files: [],
+              hasUncommittedChanges: true,
+              insertions: 3,
+              lineStatsComplete: true,
+              state: "dirty_uncommitted",
+            },
+          },
+        }),
+        diffFiles: async () => ({
+          outcome: "available",
+          files: [{
+            additions: 3,
+            binary: false,
+            deletions: 2,
+            origin: "tracked",
+            path: "server.ts",
+            previousPath: null,
+            statusLetter: "M",
+          }],
+          mergeBaseRef: "origin/main",
+          shortstat: "1 file changed, 3 insertions(+), 2 deletions(-)",
+          truncated: false,
+        }),
+      },
+    },
+  });
+  plugin(bb);
+
+  assert.deepEqual(await harness.behavior.callRpc("worktree_changes", { threadId: thread.id }), {
+    changes: { baseBranch: "origin/main", fileCount: 1, additions: 3, deletions: 2 },
+  });
+  assert.equal(
+    (harness.inspection.sdk.callsTo("environments.diffFiles")[0]?.[0] as { mergeBaseBranch: string }).mergeBaseBranch,
+    "origin/main",
+  );
+  await harness.lifecycle.dispose();
+});
+
 test("automatic reviews are claimed once while manual reviews remain available", async () => {
   const sourceThread = makeThreadResponse({ id: "thread-source", sourceThreadId: null });
   const reviewThread = makeThreadResponse({
