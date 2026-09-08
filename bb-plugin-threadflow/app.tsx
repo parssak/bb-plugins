@@ -143,6 +143,19 @@ const NATIVE_STEER_HEADER_SELECTOR = `:scope > [class~="mb-1"][class~="justify-e
 // Host-owned controls have no visibility API. Keep these cosmetic overrides
 // isolated; navigation items themselves are omitted through the SDK slot.
 const COMPACT_SIDEBAR_CSS = `
+  /* Share the host chrome row without moving React-owned DOM nodes. The
+     leading space leaves the host sidebar toggle unobstructed. */
+  [data-testid="app-sidebar-top-reserve-row"]
+    + [data-testid="sidebar-navigation-region"]:has([data-threadflow-navigation]) {
+    margin-top: calc(-1 * var(--bb-app-chrome-row-height));
+    height: var(--bb-app-chrome-row-height);
+    display: flex;
+    align-items: center;
+    padding-left: 48px;
+    position: relative;
+    pointer-events: none;
+  }
+  [data-threadflow-navigation] { pointer-events: auto; }
   [data-sidebar="footer"] :is(
     [aria-label="settings" i],
     [aria-label^="settings (" i],
@@ -1996,7 +2009,7 @@ function JournalSidebarNavigation({
   const buttonClass = "grid size-7 place-items-center rounded-md text-muted-foreground outline-none [app-region:no-drag] [-webkit-app-region:no-drag] hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40";
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
+    <div data-threadflow-navigation className="flex items-center gap-1">
       <button
         type="button"
         aria-label={mode === "history" ? "Show active threads" : "Show archived threads"}
