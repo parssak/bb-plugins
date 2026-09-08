@@ -18,11 +18,11 @@ test("compact navigation omits host destinations without a private DOM portal ta
     experimental_activate: (id: string) => activations.push(id),
     experimental_Original: () => <div>Native navigation</div>,
   }, { rpc: { threads: () => ({ threads: [], generatedAt: 1 }) } });
-  expect(slot.queryByRole("button", { name: "New thread" })).toBeNull();
+  fireEvent.click(slot.getByRole("button", { name: "New thread" }));
   expect(slot.queryByRole("button", { name: "Search threads" })).toBeNull();
   expect(slot.getByRole("button", { name: "Show archived threads" })).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Open Journal" }));
-  expect(activations).toEqual(["journal"]);
+  expect(activations).toEqual(["new", "journal"]);
   slot.lifecycle.unmount();
 });
 

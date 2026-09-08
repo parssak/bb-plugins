@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { createPortal } from "react-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
+  Add01Icon,
   ArrowLeft01Icon,
   ArrowRight01Icon,
   ArchiveRestoreIcon,
@@ -152,10 +153,14 @@ const COMPACT_SIDEBAR_CSS = `
     display: flex;
     align-items: center;
     padding-left: 48px;
+    padding-right: 8px;
     position: relative;
     pointer-events: none;
   }
   [data-threadflow-navigation] { pointer-events: auto; }
+  :root:has([data-testid="app-desktop-sidebar-trigger"]) [data-threadflow-navigation] {
+    transform: translateY(2px);
+  }
   [data-sidebar="footer"] :is(
     [aria-label="settings" i],
     [aria-label^="settings (" i],
@@ -1980,6 +1985,7 @@ function JournalSidebarNavigation({
 }: ExperimentalSidebarNavigationProps) {
   const mode = useSidebarMode();
   const { threads } = useThreadflowThreads("recent");
+  const newThreadItem = items.find((item) => item.action.kind === "new-thread");
   const journalItem = items.find((item) => item.action.kind === "open-plugin-panel"
     && item.action.pluginId === "threadflow"
     && item.action.panelId === "journal");
@@ -2013,7 +2019,7 @@ function JournalSidebarNavigation({
   const buttonClass = "grid size-7 place-items-center rounded-md text-muted-foreground outline-none [app-region:no-drag] [-webkit-app-region:no-drag] hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40";
 
   return (
-    <div data-threadflow-navigation className="flex items-center gap-1">
+    <div data-threadflow-navigation className="flex w-full items-center gap-1">
       <button
         type="button"
         aria-label={mode === "history" ? "Show active threads" : "Show archived threads"}
@@ -2040,6 +2046,20 @@ function JournalSidebarNavigation({
       >
         <HugeiconsIcon icon={File01Icon} className="size-4" aria-hidden />
       </button>
+      {newThreadItem === undefined ? null : (
+        <button
+          type="button"
+          {...newThreadItem.experimental_splitProps}
+          disabled={newThreadItem.isDisabled}
+          aria-label={newThreadItem.label}
+          aria-keyshortcuts={newThreadItem.shortcut?.ariaKeyShortcuts}
+          title={newThreadItem.label}
+          onClick={() => activate(newThreadItem.id, { openInSplit: false })}
+          className={`${buttonClass} ml-auto`}
+        >
+          <HugeiconsIcon icon={Add01Icon} className="size-4" aria-hidden />
+        </button>
+      )}
     </div>
   );
 }
