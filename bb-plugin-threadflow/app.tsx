@@ -36,7 +36,7 @@ import type {
 } from "@get-bb/plugin-sdk/app";
 import type { NativeSideChat, NativeThread, QueuedThreadWait, rpcContract } from "./server";
 import type { ActiveThreadflowWait } from "./wait-service";
-import { createResetForecastLoader, type ResetForecastResult } from "./reset-forecast";
+import { createResetForecastLoader, formatResetForecast, type ResetForecastResult } from "./reset-forecast";
 import { ContextSwitchGuard } from "./context-switch-guard";
 import { toast } from "sonner";
 import { Button } from "./components/ui/button";
@@ -2384,51 +2384,43 @@ const loadResetForecast = createResetForecastLoader();
 
 function CodexResetForecast() {
   const [result, setResult] = useState<ResetForecastResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const pending = useRef(false);
+  const mounted = useRef(false);
 
-  useEffect(() => {
-    let disposed = false;
-    let pending = false;
-    const refresh = async () => {
-      if (pending) return;
-      pending = true;
-      try {
-        const next = await loadResetForecast();
-        if (!disposed) setResult(next);
-      } catch {
-        if (!disposed) setResult({ status: "unavailable" });
-      } finally {
-        pending = false;
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 5 * 60_000);
-    return () => { disposed = true; window.clearInterval(timer); };
+  const refresh = useCallback(async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setLoading(true);
+    try {
+      const next = await loadResetForecast();
+      if (mounted.current) setResult(next);
+    } finally {
+      pending.current = false;
+      if (mounted.current) setLoading(false);
+    }
   }, []);
 
+  useEffect(() => {
+    mounted.current = true;
+    void refresh();
+    return () => { mounted.current = false; };
+  }, [refresh]);
+
   const forecast = result?.status === "ok" ? result.forecast : null;
-  const signalWindow = forecast?.official_signal?.window;
-  const activeWindow = signalWindow && Date.parse(signalWindow.end_at) > Date.now()
-    ? signalWindow.label : null;
-  const updated = forecast ? new Date(forecast.updated_at).toLocaleString() : null;
+  const label = loading ? "Codex reset: checking…"
+    : forecast ? formatResetForecast(forecast) : "Codex reset: unavailable";
 
   return (
-    <div className="shrink-0 space-y-1 px-3.5 pt-2 pb-1 text-[10px] text-muted-foreground/80">
-      <div className="flex items-center justify-between gap-2">
-        <UrlLink href="https://codex-reset.com" className="truncate hover:text-foreground">
-          Codex reset forecast
-        </UrlLink>
-        <span className="shrink-0" title={forecast?.confidence_note ?? undefined}>
-          {forecast ? `${forecast.confidence} confidence` : result ? "Unavailable" : "Loading…"}
-        </span>
-      </div>
-      {forecast && <>
-        <div className="flex items-center justify-between tabular-nums" title={`Updated ${updated}`}>
-          <span>24h · {forecast.probabilities.rounded_24h}%</span>
-          <span>48h · {forecast.probabilities.rounded_48h}%</span>
-        </div>
-        {activeWindow && <div className="truncate" title={activeWindow}>{activeWindow}</div>}
-      </>}
-    </div>
+    <button
+      type="button"
+      onClick={() => void refresh()}
+      disabled={loading}
+      title={`Click to refresh${forecast ? ` · Updated ${new Date(forecast.updated_at).toLocaleString()}` : ""}`}
+      className="shrink-0 px-3.5 pt-2 pb-1 text-left text-[10px] text-muted-foreground/80 hover:text-foreground disabled:cursor-wait"
+    >
+      {label}
+    </button>
   );
 }
 
