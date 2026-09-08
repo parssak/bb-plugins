@@ -2382,13 +2382,13 @@ function formatTodayUsage(usedPercent: number): string {
 
 const loadResetForecast = createResetForecastLoader();
 
-function CodexResetForecast() {
+function SidebarFooter() {
   const [result, setResult] = useState<ResetForecastResult | null>(null);
   const [loading, setLoading] = useState(false);
   const pending = useRef(false);
   const mounted = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const refreshForecast = useCallback(async () => {
     if (pending.current) return;
     pending.current = true;
     setLoading(true);
@@ -2403,28 +2403,13 @@ function CodexResetForecast() {
 
   useEffect(() => {
     mounted.current = true;
-    void refresh();
     return () => { mounted.current = false; };
-  }, [refresh]);
+  }, []);
 
   const forecast = result?.status === "ok" ? result.forecast : null;
   const label = loading ? "Codex reset: checking…"
     : forecast ? formatResetForecast(forecast) : "Codex reset: unavailable";
 
-  return (
-    <button
-      type="button"
-      onClick={() => void refresh()}
-      disabled={loading}
-      title={`Click to refresh${forecast ? ` · Updated ${new Date(forecast.updated_at).toLocaleString()}` : ""}`}
-      className="shrink-0 px-3.5 pt-2 pb-1 text-left text-[10px] text-muted-foreground/80 hover:text-foreground disabled:cursor-wait"
-    >
-      {label}
-    </button>
-  );
-}
-
-function SidebarFooter() {
   const rpc = useRpc<typeof rpcContract>();
   const [usage, setUsage] = useState<CodexUsage | null>(null);
   const usageRefreshInFlight = useRef(false);
@@ -2502,7 +2487,23 @@ function SidebarFooter() {
 
   return (
     <div className="shrink-0 space-y-1.5 px-3.5 py-2">
-      <div className="space-y-0.5">
+      {(loading || result !== null) && (
+        <div
+          role="status"
+          title={forecast ? `Updated ${new Date(forecast.updated_at).toLocaleString()}` : undefined}
+          className="text-[10px] text-muted-foreground/80"
+        >
+          {label}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => void refreshForecast()}
+        disabled={loading}
+        aria-label="Fetch Codex reset forecast"
+        title="Click to fetch reset forecast"
+        className="block w-full space-y-0.5 text-left disabled:cursor-wait"
+      >
         <div className="flex items-center justify-between text-[10px] text-muted-foreground/80">
           <span className="truncate">Usage</span>
           <span className="shrink-0 pl-2">
@@ -2527,7 +2528,7 @@ function SidebarFooter() {
             />
           )}
         </div>
-      </div>
+      </button>
     </div>
   );
 }
@@ -3073,7 +3074,6 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
           ))}
         </div>
       </div>
-      <CodexResetForecast />
       <SidebarFooter />
     </div>
   );
