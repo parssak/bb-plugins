@@ -144,6 +144,14 @@ const NATIVE_STEER_HEADER_SELECTOR = `:scope > [class~="mb-1"][class~="justify-e
 // Host-owned controls have no visibility API. Keep these cosmetic overrides
 // isolated; navigation items themselves are omitted through the SDK slot.
 const COMPACT_SIDEBAR_CSS = `
+  /* Disable shell open/close motion, not animations inside sidebar content. */
+  [data-sidebar="gap"],
+  [data-sidebar="panel"] {
+    transition: none !important;
+  }
+  [style*="--panel-collapse-duration"] {
+    --panel-collapse-duration: 0ms !important;
+  }
   /* Share the host chrome row without moving React-owned DOM nodes. The
      leading space leaves the host sidebar toggle unobstructed. */
   [data-testid="app-sidebar-top-reserve-row"]
