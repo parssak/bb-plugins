@@ -35,7 +35,14 @@ test("sidebar leaves unrelated controls and dialogs in charge of keyboard input"
     threads: () => ({ threads: [{ id: "thread-one", title: "Example thread", projectId: "personal", project: "Personal", provider: "codex", createdAt: 1, updatedAt: 1, archivedAt: null, archived: false, needsAttention: false, queuedWork: "none", scheduledSendAt: null, waitingForThreadIds: [], status: "idle", sideChats: [] }], generatedAt: 1 }),
     codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
   } });
-  await waitFor(() => expect(slot.getByRole("button", { name: "Example thread" })).toBeTruthy());
+  const row = await waitFor(() => slot.getByRole("link", { name: "Example thread" }));
+  // BB's native numbered shortcuts only collect HTMLAnchorElement targets.
+  expect(row).toBeInstanceOf(HTMLAnchorElement);
+  expect(row.getAttribute("data-sidebar-thread-shortcut-target")).toBe("");
+  expect(row.getAttribute("data-sidebar-thread-id")).toBe("thread-one");
+  expect(row.getAttribute("href")).toBe("/threads/thread-one");
+  fireEvent.click(row);
+  expect(slot.inspection.sidebarActionCalls).toContainEqual(expect.objectContaining({ method: "open", threadId: "thread-one" }));
   const button = document.createElement("button");
   document.body.append(button);
   button.focus();

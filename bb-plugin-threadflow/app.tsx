@@ -1817,16 +1817,20 @@ function SidebarThreadRow({
         : "group cursor-pointer rounded-md px-2 py-1.5 outline-none hover:bg-muted/50 focus-visible:ring-1 focus-visible:ring-muted-foreground/40"}
     >
       <div className="flex min-w-0 items-center gap-1.5">
-        <button
+        <a
           {...splitProps}
-          type="button"
+          href={`/threads/${encodeURIComponent(thread.id)}`}
           data-threadflow-row
           data-sidebar-thread-shortcut-target=""
           data-sidebar-thread-id={thread.id}
           data-thread-id={thread.id}
           aria-label={thread.title}
           aria-current={selected ? "true" : undefined}
-          onClick={() => onOpen(thread)}
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            onOpen(thread);
+          }}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
         >
         <kbd className="shrink-0 font-mono text-[9px] text-muted-foreground">{shortcutNumber}</kbd>
@@ -1860,7 +1864,7 @@ function SidebarThreadRow({
                 : relativeTime(thread.updatedAt)}
           </time>
         </span>
-        </button>
+        </a>
         {pullRequest === null ? null : <PullRequestLink pullRequest={pullRequest} />}
       </div>
       {thread.sideChats.length > 0 ? (
@@ -2409,13 +2413,15 @@ function ArchivedThreadList({ onNavigate }: PluginThreadListProps) {
               const restoring = restoringThreadIds.has(thread.id);
               return (
                 <div key={thread.id} className="flex items-center gap-1 rounded-md hover:bg-muted/50">
-                  <button
-                    type="button"
+                  <a
+                    href={`/threads/${encodeURIComponent(thread.id)}`}
                     data-threadflow-row
                     data-thread-id={thread.id}
                     data-sidebar-thread-shortcut-target=""
                     data-sidebar-thread-id={thread.id}
-                    onClick={() => {
+                    onClick={(event) => {
+                      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                      event.preventDefault();
                       navigate.toThread(thread.id);
                       onNavigate();
                     }}
@@ -2423,7 +2429,7 @@ function ArchivedThreadList({ onNavigate }: PluginThreadListProps) {
                   >
                     <span className="block truncate text-xs text-sidebar-foreground">{thread.title}</span>
                     <span className="block truncate text-xs text-muted-foreground">{thread.project}</span>
-                  </button>
+                  </a>
                   <button
                     type="button"
                     aria-label={`Unarchive ${thread.title}`}
