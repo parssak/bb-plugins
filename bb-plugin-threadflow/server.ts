@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { createResetForecastLoader, resetForecastResultSchema } from "./reset-forecast.ts";
 
 import {
   advanceCompletionAlertState,
@@ -109,10 +108,6 @@ export type NativeThread = z.infer<typeof nativeThreadSchema>;
 export type NativeSideChat = z.infer<typeof sideChatSchema>;
 
 export const rpcContract = defineRpcContract({
-  codex_reset_forecast: {
-    input: z.object({}).strict(),
-    output: resetForecastResultSchema,
-  },
   threads: {
     input: z.object({ scope: scopeSchema, query: z.string().trim().max(200) }),
     output: z.object({
@@ -486,7 +481,6 @@ function mergeUsageSamples(
 }
 
 export default function plugin(bb: BbPluginApi) {
-  const loadResetForecast = createResetForecastLoader();
   const settings = bb.settings.define({
     completionAlert: {
       type: "select",
@@ -1103,7 +1097,6 @@ export default function plugin(bb: BbPluginApi) {
   };
 
   bb.rpc.register(rpcContract, {
-    codex_reset_forecast: loadResetForecast,
     threads: async ({ scope, query }) => {
       const [active, archived, queuedMessages, projects, providers] = await Promise.all([
         bb.sdk.threads.list({ archived: false, includeHidden: true, limit: MAX_THREADS_PER_STATE }),

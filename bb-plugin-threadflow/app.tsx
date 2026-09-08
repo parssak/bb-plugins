@@ -36,7 +36,7 @@ import type {
 } from "@get-bb/plugin-sdk/app";
 import type { NativeSideChat, NativeThread, QueuedThreadWait, rpcContract } from "./server";
 import type { ActiveThreadflowWait } from "./wait-service";
-import type { ResetForecastResult } from "./reset-forecast";
+import { createResetForecastLoader, type ResetForecastResult } from "./reset-forecast";
 import { ContextSwitchGuard } from "./context-switch-guard";
 import { toast } from "sonner";
 import { Button } from "./components/ui/button";
@@ -2380,8 +2380,9 @@ function formatTodayUsage(usedPercent: number): string {
   return `${Math.round(usedPercent)}% today`;
 }
 
+const loadResetForecast = createResetForecastLoader();
+
 function CodexResetForecast() {
-  const rpc = useRpc<typeof rpcContract>();
   const [result, setResult] = useState<ResetForecastResult | null>(null);
 
   useEffect(() => {
@@ -2391,7 +2392,7 @@ function CodexResetForecast() {
       if (pending) return;
       pending = true;
       try {
-        const next = await rpc.call("codex_reset_forecast", {});
+        const next = await loadResetForecast();
         if (!disposed) setResult(next);
       } catch {
         if (!disposed) setResult({ status: "unavailable" });
@@ -2402,7 +2403,7 @@ function CodexResetForecast() {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 5 * 60_000);
     return () => { disposed = true; window.clearInterval(timer); };
-  }, [rpc]);
+  }, []);
 
   const forecast = result?.status === "ok" ? result.forecast : null;
   const signalWindow = forecast?.official_signal?.window;

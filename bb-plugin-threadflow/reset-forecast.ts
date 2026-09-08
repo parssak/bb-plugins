@@ -14,13 +14,12 @@ export const resetForecastSchema = z.object({
   }).nullish(),
 });
 
-export const resetForecastResultSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("ok"), forecast: resetForecastSchema }),
-  z.object({ status: z.literal("unavailable") }),
-]);
-export type ResetForecastResult = z.infer<typeof resetForecastResultSchema>;
+export type ResetForecastResult =
+  | { status: "ok"; forecast: z.infer<typeof resetForecastSchema> }
+  | { status: "unavailable" };
 
-// Share one request/cache across sidebar clients; never present a failed refresh as fresh.
+// Run in the browser so requests use its TLS stack, including encrypted ClientHello.
+// Share one request/cache across sidebar mounts; never present a failed refresh as fresh.
 export function createResetForecastLoader() {
   let cached: ResetForecastResult | undefined;
   let expiresAt = 0;
