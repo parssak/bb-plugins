@@ -5,7 +5,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 afterEach(cleanup);
 
-test("navigation retains host destinations without a private DOM portal target", async () => {
+test("compact navigation omits host destinations without a private DOM portal target", async () => {
   const app = await loadPluginApp(() => import("./app"));
   const activations: string[] = [];
   const items = [
@@ -18,10 +18,11 @@ test("navigation retains host destinations without a private DOM portal target",
     experimental_activate: (id: string) => activations.push(id),
     experimental_Original: () => <div>Native navigation</div>,
   }, { rpc: { threads: () => ({ threads: [], generatedAt: 1 }) } });
-  fireEvent.click(slot.getByRole("button", { name: "New thread" }));
-  fireEvent.click(slot.getByRole("button", { name: "Search threads" }));
-  expect(activations).toEqual(["new", "search"]);
-  expect(slot.getByRole("button", { name: "Open Journal" })).toBeTruthy();
+  expect(slot.queryByRole("button", { name: "New thread" })).toBeNull();
+  expect(slot.queryByRole("button", { name: "Search threads" })).toBeNull();
+  expect(slot.getByRole("button", { name: "Show archived threads" })).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Open Journal" }));
+  expect(activations).toEqual(["journal"]);
   slot.lifecycle.unmount();
 });
 

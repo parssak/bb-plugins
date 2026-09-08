@@ -140,6 +140,23 @@ const NATIVE_USER_MESSAGE_SELECTOR = `[data-message-column] > [class~="group/mes
 const NATIVE_USER_BUBBLE_RELATIVE_SELECTOR = `:scope > [class~="w-fit"][class~="flex-col"] > [class~="bg-surface-recessed"]`;
 const NATIVE_USER_BUBBLE_SELECTOR = `${NATIVE_USER_MESSAGE_SELECTOR} > [class~="w-fit"][class~="flex-col"] > [class~="bg-surface-recessed"]`;
 const NATIVE_STEER_HEADER_SELECTOR = `:scope > [class~="mb-1"][class~="justify-end"]:has(> span[class~="whitespace-nowrap"])`;
+// Host-owned controls have no visibility API. Keep these cosmetic overrides
+// isolated; navigation items themselves are omitted through the SDK slot.
+const COMPACT_SIDEBAR_CSS = `
+  [data-sidebar="footer"] :is(
+    [aria-label="settings" i],
+    [aria-label^="settings (" i],
+    [data-testid="plugin-sidebar-footer-item-connect-remote"],
+    [data-testid="plugin-sidebar-footer-action-connect-remote-access"],
+    [aria-label="remote access" i],
+    [aria-label="report a bug" i]
+  ),
+  [data-sidebar] :is([aria-label="go back" i], [aria-label="go forward" i]),
+  [data-testid="app-sidebar-navigation-divider"] {
+    display: none !important;
+  }
+`;
+
 const NATIVE_CHAT_CSS = `
   [${THREAD_HEADER_TITLE_HOST_ATTRIBUTE}] {
     position: relative !important;
@@ -1980,21 +1997,6 @@ function JournalSidebarNavigation({
 
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {items.filter((item) => item.id !== journalItem.id).map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          {...item.experimental_splitProps}
-          disabled={item.isDisabled}
-          aria-label={item.label}
-          aria-keyshortcuts={item.shortcut?.ariaKeyShortcuts}
-          title={item.label}
-          onClick={() => activate(item.id, { openInSplit: false })}
-          className={`${buttonClass} w-auto px-2 text-xs`}
-        >
-          {item.label}
-        </button>
-      ))}
       <button
         type="button"
         aria-label={mode === "history" ? "Show active threads" : "Show archived threads"}
@@ -2836,6 +2838,7 @@ export default definePluginApp((app) => {
           display: none !important;
         }
 
+        ${COMPACT_SIDEBAR_CSS}
         ${NATIVE_CHAT_CSS}
         ${JOURNAL_EDITOR_CSS}
       `;
