@@ -2,6 +2,10 @@
   "name": "bb-plugin-threadflow",
   "version": "0.1.0",
   "type": "module",
+  "scripts": {
+    "test": "node --test && vitest run sidebar.test.tsx",
+    "check": "tsc --noEmit"
+  },
   "engines": {
     "bb": ">=0.41",
     "bbPluginSdk": ">=0.4.34"
@@ -42,6 +46,7 @@
     "@radix-ui/react-popover": "^1.1.19",
     "@radix-ui/react-select": "^2.3.3",
     "@radix-ui/react-tooltip": "^1.2.12",
+    "@testing-library/react": "^16.3.3",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
@@ -51,9 +56,13 @@
     "clsx": "^2.1.1",
     "cron-parser": "^5.5.0",
     "hono": "^4.11.9",
+    "jsdom": "^26.1.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "sonner": "^1.7.4",
     "tailwind-merge": "^3.4.0",
     "typescript": "^5.7.0",
-    "vaul": "^1.1.2"
+    "vaul": "^1.1.2",
+    "vitest": "^3.2.7"
   }
 }

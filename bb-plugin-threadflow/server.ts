@@ -965,6 +965,33 @@ export default function plugin(bb: BbPluginApi) {
       }
     }
   };
+  const createAutomaticReview = async (sourceThreadId: string) => {
+    const sourceThread = await sourceThreadFor(sourceThreadId);
+    const resolvedSourceThreadId = sourceThread.id;
+    if (automaticReviewsInFlight.has(resolvedSourceThreadId)) return { status: "already_claimed" as const };
+    automaticReviewsInFlight.add(resolvedSourceThreadId);
+    try {
+      const key = automaticReviewClaimKey(resolvedSourceThreadId);
+      if (await bb.storage.kv.get<AutomaticReviewClaim>(key) !== undefined) return { status: "already_claimed" as const };
+      await createSideChat({ sourceThreadId: resolvedSourceThreadId, initialMessage: REVIEW_WORKTREE_PROMPT, title: "Review" });
+      await bb.storage.kv.set(key, { claimedAt: Date.now() } satisfies AutomaticReviewClaim);
+      return { status: "started" as const };
+    } finally {
+      automaticReviewsInFlight.delete(resolvedSourceThreadId);
+    }
+  };
+  bb.events.on("thread.idle", async ({ thread }) => {
+    if (thread.visibility === "hidden" || thread.parentThreadId !== null || thread.archivedAt !== null || thread.environmentId === null) return;
+    try {
+      if (await bb.storage.kv.get(automaticReviewClaimKey(thread.id)) !== undefined) return;
+      const result = await bb.sdk.environments.pullRequest({ environmentId: thread.environmentId });
+      if (result.outcome === "available" && (result.pullRequest.state === "open" || result.pullRequest.state === "draft")) {
+        await createAutomaticReview(thread.id);
+      }
+    } catch (cause) {
+      bb.log.warn(`Could not start automatic review: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  });
   bb.events.on("thread.created", publishThreadsChanged);
   bb.events.on("thread.active", ({ thread }) => {
     publishThreadsChanged();
@@ -1376,16 +1403,14 @@ export default function plugin(bb: BbPluginApi) {
       const sourceThreadIds = new Set(
         threads.flatMap((thread) => thread.sourceThreadId === null && thread.archivedAt === null ? [thread.id] : []),
       );
-      const activeSideChats = sourceThreadIds.size === 0
-        ? []
-        : await bb.sdk.threads.list({
-          archived: false,
-          includeHidden: true,
-          originKind: "fork",
-          limit: MAX_THREADS_PER_STATE,
-        });
+      const activeThreads = await bb.sdk.threads.list({
+        archived: false,
+        includeHidden: true,
+        limit: MAX_THREADS_PER_STATE,
+      });
+      const activeThreadById = new Map(activeThreads.map((thread) => [thread.id, thread]));
       const sideChatsBySource = new Map<string, Array<{ needsAttention: boolean; running: boolean }>>();
-      for (const sideChat of activeSideChats) {
+      for (const sideChat of activeThreads) {
         if (
           sideChat.visibility !== "hidden"
           || sideChat.sourceThreadId === null
@@ -1398,14 +1423,14 @@ export default function plugin(bb: BbPluginApi) {
         });
         sideChatsBySource.set(sideChat.sourceThreadId, sideChats);
       }
-      const statuses = threads.flatMap((thread) => {
+      const statuses = threads.flatMap<{ threadId: string; status: "archived" | "in-progress" }>((thread) => {
         if (thread.archivedAt !== null) {
           return [{ threadId: thread.id, status: "archived" as const }];
         }
         const state = classifyThreadListState({
           archived: false,
-          needsAttention: thread.hasPendingInteraction,
-          queuedWork: thread.queuedWork,
+          needsAttention: activeThreadById.get(thread.id)?.hasPendingInteraction ?? false,
+          queuedWork: activeThreadById.get(thread.id)?.queuedWork ?? "none",
           sideChats: sideChatsBySource.get(thread.id) ?? [],
           status: thread.status,
         });
@@ -1416,30 +1441,7 @@ export default function plugin(bb: BbPluginApi) {
       return { statuses };
     },
     create_side_chat: createSideChat,
-    create_automatic_review: async ({ sourceThreadId }) => {
-      const sourceThread = await sourceThreadFor(sourceThreadId);
-      const resolvedSourceThreadId = sourceThread.id;
-      if (automaticReviewsInFlight.has(resolvedSourceThreadId)) {
-        return { status: "already_claimed" as const };
-      }
-
-      automaticReviewsInFlight.add(resolvedSourceThreadId);
-      try {
-        const key = automaticReviewClaimKey(resolvedSourceThreadId);
-        if (await bb.storage.kv.get<AutomaticReviewClaim>(key) !== undefined) {
-          return { status: "already_claimed" as const };
-        }
-        await bb.storage.kv.set(key, { claimedAt: Date.now() } satisfies AutomaticReviewClaim);
-        await createSideChat({
-          sourceThreadId: resolvedSourceThreadId,
-          initialMessage: REVIEW_WORKTREE_PROMPT,
-          title: "Review",
-        });
-        return { status: "started" as const };
-      } finally {
-        automaticReviewsInFlight.delete(resolvedSourceThreadId);
-      }
-    },
+    create_automatic_review: ({ sourceThreadId }) => createAutomaticReview(sourceThreadId),
     send_message: async ({ threadId, message }) => {
       await bb.sdk.threads.send({
         threadId,

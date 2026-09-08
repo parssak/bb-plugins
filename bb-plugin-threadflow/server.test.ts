@@ -371,7 +371,7 @@ test("worktree changes use the environment base when status has no merge-base de
 });
 
 test("automatic reviews are claimed once while manual reviews remain available", async () => {
-  const sourceThread = makeThreadResponse({ id: "thread-source", sourceThreadId: null });
+  const sourceThread = makeThreadResponse({ id: "thread-source", sourceThreadId: null, environmentId: "environment-source" });
   const reviewThread = makeThreadResponse({
     id: "thread-review",
     sourceThreadId: sourceThread.id,
@@ -381,20 +381,28 @@ test("automatic reviews are claimed once while manual reviews remain available",
     originKind: "fork",
     originPluginId: "threadflow-test",
   });
+  let failFork = true;
   const { bb, harness } = createFakePluginHost({
     pluginId: "threadflow-test",
     sdk: {
       threads: {
         get: async ({ threadId }) => threadId === sourceThread.id ? sourceThread : reviewThread,
         list: async () => [],
-        fork: async () => reviewThread,
+        fork: async () => {
+          if (failFork) throw new Error("Temporary fork failure");
+          return reviewThread;
+        },
         update: async () => reviewThread,
+        timeline: async () => ({ rows: [] }),
       },
+      environments: { pullRequest: async () => ({ outcome: "available", pullRequest: { state: "open" } }) },
     },
   });
   plugin(bb);
 
   const input = { sourceThreadId: sourceThread.id };
+  await assert.rejects(harness.behavior.callRpc("create_automatic_review", input), /Temporary fork failure/);
+  failFork = false;
   const results = await Promise.all([
     harness.behavior.callRpc("create_automatic_review", input),
     harness.behavior.callRpc("create_automatic_review", input),
@@ -403,7 +411,7 @@ test("automatic reviews are claimed once while manual reviews remain available",
     results.map((result) => (result as { status: string }).status).sort(),
     ["already_claimed", "started"],
   );
-  assert.equal(harness.inspection.sdk.callsTo("threads.fork").length, 1);
+  assert.equal(harness.inspection.sdk.callsTo("threads.fork").length, 2);
 
   const reloaded = await harness.lifecycle.reload(plugin);
   assert.deepEqual(
@@ -418,6 +426,11 @@ test("automatic reviews are claimed once while manual reviews remain available",
     title: "Review",
   });
   assert.equal(reloaded.harness.inspection.sdk.callsTo("threads.fork").length, 1);
+
+  // Completion drives automation without mounting any frontend component.
+  await reloaded.bb.storage.kv.delete(`automatic-review-claim:${sourceThread.id}`);
+  await reloaded.harness.behavior.emitThreadEvent("thread.idle", { thread: sourceThread, lastAssistantText: null });
+  assert.equal(reloaded.harness.inspection.sdk.callsTo("threads.fork").length, 2);
 
   await reloaded.harness.lifecycle.dispose();
 });
@@ -549,7 +562,7 @@ test("journal thread statuses distinguish archived and in-progress links", async
           if (thread === undefined) throw new Error("Thread not found");
           return thread;
         },
-        list: async () => [workingSideChat],
+        list: async () => [...threads.values()].filter((thread) => thread.archivedAt === null).concat(workingSideChat),
       },
     },
   });

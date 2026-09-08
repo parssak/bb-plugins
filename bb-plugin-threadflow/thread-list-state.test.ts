@@ -41,6 +41,17 @@ test("attention and failed queues remain needs-you states", () => {
   assert.equal(classifyThreadListState(thread({ queuedWork: "failed" })), "needs-you");
 });
 
+test("a working child cannot hide a parent or sibling needing input", () => {
+  assert.equal(classifyThreadListState(thread({
+    needsAttention: true,
+    sideChats: [{ needsAttention: false, running: true }],
+  })), "needs-you");
+  assert.equal(classifyThreadListState(thread({
+    status: "active",
+    sideChats: [{ needsAttention: true, running: false }],
+  })), "needs-you");
+});
+
 test("working threads declared as wait dependencies nest under the waiting thread", () => {
   const dependency = thread({ id: "dependency", status: "active", waitingForThreadIds: [] });
   const unrelated = thread({ id: "unrelated", status: "active", waitingForThreadIds: [] });

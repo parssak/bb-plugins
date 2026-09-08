@@ -36,8 +36,9 @@ import type {
 } from "@get-bb/plugin-sdk/app";
 import type { NativeSideChat, NativeThread, QueuedThreadWait, rpcContract } from "./server";
 import type { ActiveThreadflowWait } from "./wait-service";
-import { createResetForecastLoader, formatResetForecast, type ResetForecastResult } from "./reset-forecast";
+import { SidebarFooter } from "./sidebar-usage";
 import { ContextSwitchGuard } from "./context-switch-guard";
+import { useThreadflowThreads } from "./hooks/use-threadflow-threads";
 import { toast } from "sonner";
 import { Button } from "./components/ui/button";
 import {
@@ -48,11 +49,6 @@ import {
   DialogTitle,
 } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
-import {
-  parseUsageSamples,
-  type TodayUsageEstimate,
-  type UsageSample,
-} from "./usage-tracking";
 import { parseThreadTitleBrand, type ThreadTitleBrand } from "./thread-title-brand";
 import { isThreadNudgerMessageText } from "./thread-nudger-message";
 import { formatUserMessageTimestamp, type UserMessageTimestamp } from "./user-message-timestamp";
@@ -93,8 +89,6 @@ const SUMMARIES_CHANGED_CHANNEL = "chat-summaries-changed";
 const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 const REVIEW_WORKTREE_PROMPT = "Review the changes in this worktree";
 const ASK_LINUS_PROMPT = "how would linus torvalds feel about this";
-const LEGACY_USAGE_SAMPLES_STORAGE_KEY = "threadflow:codex-usage-samples:v1";
-const MAX_LEGACY_USAGE_SAMPLES = 2_048;
 const WAITING_COLLAPSED_STORAGE_KEY = "threadflow:waiting-collapsed:v1";
 type SidebarMode = "threads" | "history";
 let sidebarMode: SidebarMode = "threads";
@@ -663,19 +657,6 @@ const NATIVE_COMPOSER_CSS = `
   }
 `;
 
-const INSTANT_SIDEBAR_CSS = `
-  [data-sidebar],
-  [data-sidebar] *,
-  [data-slot^="sidebar-"],
-  [data-slot^="sidebar-"] * {
-    animation-delay: 0s !important;
-    animation-duration: 0s !important;
-    transition-delay: 0s !important;
-    transition-duration: 0s !important;
-    scroll-behavior: auto !important;
-  }
-`;
-
 type KeyboardFocusMode = "sidebar" | "chat";
 
 function getKeyboardFocusMode(): KeyboardFocusMode {
@@ -1055,10 +1036,11 @@ function WaitConditionDetails({ wait }: { wait: ActiveThreadflowWait }) {
     );
   }
   if (wait.condition.kind === "thread_archived") {
+    const { targetThreadId } = wait.condition;
     return (
       <button
         type="button"
-        onClick={() => navigate.toThread(wait.condition.targetThreadId)}
+        onClick={() => navigate.toThread(targetThreadId)}
         className="text-sm font-medium text-warning underline decoration-warning/40 underline-offset-4 hover:decoration-warning"
       >
         Open {wait.condition.targetTitle}
@@ -1800,27 +1782,23 @@ function SidebarThreadRow({
 
   return (
     <div
-      {...splitProps}
-      role="button"
-      tabIndex={0}
-      data-threadflow-row
-      data-sidebar-thread-shortcut-target=""
-      data-sidebar-thread-id={thread.id}
-      data-thread-id={thread.id}
-      aria-current={selected ? "true" : undefined}
-      onClick={() => onOpen(thread)}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen(thread);
-        }
-      }}
       className={selected
         ? "group cursor-pointer rounded-md bg-muted/60 px-2 py-1.5 outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
         : "group cursor-pointer rounded-md px-2 py-1.5 outline-none hover:bg-muted/50 focus-visible:ring-1 focus-visible:ring-muted-foreground/40"}
     >
       <div className="flex min-w-0 items-center gap-1.5">
+        <button
+          {...splitProps}
+          type="button"
+          data-threadflow-row
+          data-sidebar-thread-shortcut-target=""
+          data-sidebar-thread-id={thread.id}
+          data-thread-id={thread.id}
+          aria-label={thread.title}
+          aria-current={selected ? "true" : undefined}
+          onClick={() => onOpen(thread)}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+        >
         <kbd className="shrink-0 font-mono text-[9px] text-muted-foreground">{shortcutNumber}</kbd>
         <BackgroundCommandIndicator count={backgroundCommands} />
         <span
@@ -1852,6 +1830,7 @@ function SidebarThreadRow({
                 : relativeTime(thread.updatedAt)}
           </time>
         </span>
+        </button>
         {pullRequest === null ? null : <PullRequestLink pullRequest={pullRequest} />}
       </div>
       {thread.sideChats.length > 0 ? (
@@ -1965,38 +1944,12 @@ function JournalSidebarNavigation({
   experimental_activate: activate,
   experimental_Original: Original,
 }: ExperimentalSidebarNavigationProps) {
-  const rpc = useRpc<typeof rpcContract>();
   const mode = useSidebarMode();
-  const [threads, setThreads] = useState<NativeThread[]>([]);
-  const [headerTarget, setHeaderTarget] = useState<HTMLElement | null>(null);
+  const { threads } = useThreadflowThreads("recent");
   const journalItem = items.find((item) => item.action.kind === "open-plugin-panel"
     && item.action.pluginId === "threadflow"
     && item.action.panelId === "journal");
 
-  const refresh = useCallback(async () => {
-    try {
-      const result = await rpc.call("threads", { scope: "recent", query: "" });
-      setThreads(result.threads);
-    } catch {
-      // The journal stays available; only its optional reminder color goes stale.
-    }
-  }, [rpc]);
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
-  useRealtime(THREADS_CHANGED_CHANNEL, () => void refresh());
-  useEffect(() => {
-    const findTarget = () => {
-      const nextTarget = document.querySelector<HTMLElement>('[data-testid="app-sidebar-top-reserve-row"]');
-      setHeaderTarget((current) => current === nextTarget ? current : nextTarget);
-    };
-    findTarget();
-    const observer = new MutationObserver(findTarget);
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => observer.disconnect();
-  }, []);
   useEffect(() => {
     if (journalItem === undefined) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2016,7 +1969,7 @@ function JournalSidebarNavigation({
   }, [activate, journalItem]);
 
   if (isCompactViewport) return <Original />;
-  if (journalItem === undefined || headerTarget === null) return null;
+  if (journalItem === undefined) return <Original />;
   const isActive = activeItemId === journalItem.id;
   const allWorkIsRunning = threads.length > 0 && threads.every(threadIsWorking);
   const highlight = isActive || allWorkIsRunning;
@@ -2025,8 +1978,23 @@ function JournalSidebarNavigation({
     : "Open Journal";
   const buttonClass = "grid size-7 place-items-center rounded-md text-muted-foreground outline-none [app-region:no-drag] [-webkit-app-region:no-drag] hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40";
 
-  return createPortal(
-    <div className="flex items-center gap-1">
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {items.filter((item) => item.id !== journalItem.id).map((item) => (
+        <button
+          key={item.id}
+          type="button"
+          {...item.experimental_splitProps}
+          disabled={item.isDisabled}
+          aria-label={item.label}
+          aria-keyshortcuts={item.shortcut?.ariaKeyShortcuts}
+          title={item.label}
+          onClick={() => activate(item.id, { openInSplit: false })}
+          className={`${buttonClass} w-auto px-2 text-xs`}
+        >
+          {item.label}
+        </button>
+      ))}
       <button
         type="button"
         aria-label={mode === "history" ? "Show active threads" : "Show archived threads"}
@@ -2053,8 +2021,7 @@ function JournalSidebarNavigation({
       >
         <HugeiconsIcon icon={File01Icon} className="size-4" aria-hidden />
       </button>
-    </div>,
-    headerTarget,
+    </div>
   );
 }
 
@@ -2349,189 +2316,6 @@ function JournalPage({ subPath }: PluginNavPanelProps) {
   );
 }
 
-type CodexUsage =
-  | {
-    status: "ok";
-    planLabel: string | null;
-    windows: Array<{ label: string; resetsAt: string | null; usedPercent: number }>;
-    todayUsage: TodayUsageEstimate | null;
-  }
-  | { status: "unavailable"; message: string };
-
-function formatUsageReset(resetsAt: string | null): string | null {
-  if (resetsAt === null) return null;
-  const remainingMs = Date.parse(resetsAt) - Date.now();
-  if (!Number.isFinite(remainingMs)) return null;
-  if (remainingMs <= 0) return "resetting";
-  const minutes = Math.ceil(remainingMs / 60_000);
-  if (minutes < 60) return `in ${minutes}m`;
-  const hours = Math.ceil(minutes / 60);
-  if (hours < 48) return `in ${hours}h`;
-  return `in ${Math.ceil(hours / 24)}d`;
-}
-
-function localDayStart(timestamp: number): number {
-  const date = new Date(timestamp);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
-
-function formatTodayUsage(usedPercent: number): string {
-  return `${Math.round(usedPercent)}% today`;
-}
-
-const loadResetForecast = createResetForecastLoader();
-
-function SidebarFooter() {
-  const [result, setResult] = useState<ResetForecastResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const pending = useRef(false);
-  const mounted = useRef(false);
-
-  const refreshForecast = useCallback(async () => {
-    if (pending.current) return;
-    pending.current = true;
-    setLoading(true);
-    try {
-      const next = await loadResetForecast();
-      if (mounted.current) setResult(next);
-    } finally {
-      pending.current = false;
-      if (mounted.current) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; };
-  }, []);
-
-  const forecast = result?.status === "ok" ? result.forecast : null;
-  const label = loading ? "Codex reset: checking…"
-    : forecast ? formatResetForecast(forecast) : "Codex reset: unavailable";
-
-  const rpc = useRpc<typeof rpcContract>();
-  const [usage, setUsage] = useState<CodexUsage | null>(null);
-  const usageRefreshInFlight = useRef(false);
-  const legacyUsageSamples = useRef<UsageSample[] | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (usageRefreshInFlight.current) return;
-    usageRefreshInFlight.current = true;
-    try {
-      if (legacyUsageSamples.current === null) {
-        try {
-          legacyUsageSamples.current = parseUsageSamples(
-            window.localStorage.getItem(LEGACY_USAGE_SAMPLES_STORAGE_KEY),
-          ).slice(-MAX_LEGACY_USAGE_SAMPLES);
-        } catch {
-          legacyUsageSamples.current = [];
-        }
-      }
-      const now = Date.now();
-      const result = await rpc.call("codex_usage", {
-        dayStartedAt: localDayStart(now),
-        ...(legacyUsageSamples.current.length === 0
-          ? {}
-          : { legacySamples: legacyUsageSamples.current }),
-      });
-      setUsage(result);
-      if (result.status === "ok") {
-        legacyUsageSamples.current = [];
-        try {
-          window.localStorage.removeItem(LEGACY_USAGE_SAMPLES_STORAGE_KEY);
-        } catch {
-          // The shared server history is authoritative even if legacy cleanup fails.
-        }
-      }
-    } catch {
-      setUsage({ status: "unavailable", message: "Codex usage unavailable" });
-    } finally {
-      usageRefreshInFlight.current = false;
-    }
-  }, [rpc]);
-
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 10 * 60_000);
-    return () => window.clearInterval(timer);
-  }, [refresh]);
-
-  useEffect(() => {
-    let timer: number | undefined;
-    const schedule = () => {
-      const now = Date.now();
-      const nextMidnight = new Date(now);
-      nextMidnight.setHours(24, 0, 0, 0);
-      timer = window.setTimeout(() => {
-        void refresh();
-        schedule();
-      }, nextMidnight.getTime() - now + 1_000);
-    };
-    schedule();
-    return () => {
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [refresh]);
-
-  const weeklyWindow = usage?.status === "ok"
-    ? usage.windows.find((window) => /week|7\s*d/i.test(window.label)) ?? usage.windows.at(-1) ?? null
-    : null;
-
-  if (weeklyWindow === null) return null;
-
-  const usedPercent = Math.min(100, Math.max(0, weeklyWindow.usedPercent));
-  const todayUsage = usage?.status === "ok" ? usage.todayUsage : null;
-  const todayWidth = todayUsage === null ? 0 : Math.min(usedPercent, todayUsage.usedPercent);
-  const reset = formatUsageReset(weeklyWindow.resetsAt);
-
-  return (
-    <div className="shrink-0 space-y-1.5 px-3.5 py-2">
-      {(loading || result !== null) && (
-        <div
-          role="status"
-          title={forecast ? `Updated ${new Date(forecast.updated_at).toLocaleString()}` : undefined}
-          className="text-[10px] text-muted-foreground/80"
-        >
-          {label}
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={() => void refreshForecast()}
-        disabled={loading}
-        aria-label="Fetch Codex reset forecast"
-        title="Click to fetch reset forecast"
-        className="block w-full space-y-0.5 text-left disabled:cursor-wait"
-      >
-        <div className="flex items-center justify-between text-[10px] text-muted-foreground/80">
-          <span className="truncate">Usage</span>
-          <span className="shrink-0 pl-2">
-            {formatTodayUsage(todayUsage?.usedPercent ?? 0)} • {Math.round(100 - usedPercent)}% left
-            {reset === null ? "" : ` • ${reset}`}
-          </span>
-        </div>
-        <div
-          role="progressbar"
-          aria-label={`${weeklyWindow.label} usage`}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(usedPercent)}
-          className="relative h-1 overflow-hidden rounded-full bg-muted"
-        >
-          <div className="h-full rounded-full bg-foreground/30" style={{ width: `${usedPercent}%` }} />
-          {todayUsage === null || todayWidth === 0 ? null : (
-            <div
-              className="absolute top-0 h-full bg-foreground/65"
-              style={{ left: `${usedPercent - todayWidth}%`, width: `${todayWidth}%` }}
-              title={formatTodayUsage(todayWidth)}
-            />
-          )}
-        </div>
-      </button>
-    </div>
-  );
-}
 
 function ArchivedThreadList({ onNavigate }: PluginThreadListProps) {
   const rpc = useRpc<typeof rpcContract>();
@@ -2650,7 +2434,7 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
   const { threads: nativeSidebarThreads } = experimental_useSidebarThreads();
   const actions = experimental_useSidebarThreadActions();
   const navigate = useBbNavigate();
-  const [threads, setThreads] = useState<NativeThread[]>([]);
+  const { threads, error: loadError, refresh } = useThreadflowThreads("recent");
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(activeThreadId);
   const [pendingSideChat, setPendingSideChat] = useState<{
     sideChat: NativeSideChat;
@@ -2667,9 +2451,6 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
   });
   const listRef = useRef<HTMLDivElement>(null);
   const keepSidebarFocusRef = useRef(false);
-  const previousPullRequestNumbersRef = useRef(new Map<string, number | null>());
-  const startedReviewKeysRef = useRef(new Set<string>());
-  const reviewsInFlightRef = useRef(new Set<string>());
   const runThreadCommand = useThreadCommand(selectedThreadId);
 
   const toggleWaitingCollapsed = useCallback(() => {
@@ -2684,58 +2465,13 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
     });
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const result = await rpc.call("threads", { scope: "recent", query: "" });
-      setThreads(result.threads);
-      setError(null);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  }, [rpc]);
-  useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 30_000);
-    return () => window.clearInterval(timer);
-  }, [nativeSidebarThreads, refresh]);
-  useRealtime(THREADS_CHANGED_CHANNEL, () => void refresh());
   useEffect(() => {
     if (activeThreadId !== null) setSelectedThreadId(activeThreadId);
   }, [activeThreadId]);
 
   const recordPullRequest = useCallback((threadId: string, pullRequest: PluginSidebarPullRequest | null) => {
     setPullRequests((current) => ({ ...current, [threadId]: pullRequest }));
-    const number = pullRequest?.number ?? null;
-    const previousNumber = previousPullRequestNumbersRef.current.get(threadId);
-    previousPullRequestNumbersRef.current.set(threadId, number);
-
-    const reviewKey = number === null ? null : `${threadId}:${number}`;
-    if (previousNumber === undefined) {
-      if (reviewKey !== null) startedReviewKeysRef.current.add(reviewKey);
-      return;
-    }
-    if (
-      reviewKey === null
-      || previousNumber === number
-      || startedReviewKeysRef.current.has(reviewKey)
-      || reviewsInFlightRef.current.has(reviewKey)
-    ) return;
-
-    startedReviewKeysRef.current.add(reviewKey);
-    reviewsInFlightRef.current.add(reviewKey);
-    void rpc.call("create_automatic_review", {
-      sourceThreadId: threadId,
-    }).then(
-      ({ status }) => {
-        if (status === "started") toast.success(`Review started for PR #${number}`);
-      },
-      (cause) => {
-        startedReviewKeysRef.current.delete(reviewKey);
-        previousPullRequestNumbersRef.current.set(threadId, null);
-        toast.error(cause instanceof Error ? cause.message : String(cause));
-      },
-    ).finally(() => reviewsInFlightRef.current.delete(reviewKey));
-  }, [rpc]);
+  }, []);
   const { groups, dependenciesByParentId } = useMemo(
     () => groupSidebarThreads(threads, pullRequests),
     [pullRequests, threads],
@@ -2798,13 +2534,13 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
   const renameThread = useCallback(async (thread: NativeThread, title: string) => {
     try {
       await actions.rename(thread.id, title);
-      setThreads((current) => current.map((candidate) => candidate.id === thread.id ? { ...candidate, title } : candidate));
+      await refresh();
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       throw cause;
     }
-  }, [actions]);
+  }, [actions, refresh]);
 
   const closeSideChat = useCallback(async (sideChat: NativeSideChat) => {
     try {
@@ -2862,6 +2598,8 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
     };
     const onKeyDown = (event: KeyboardEvent) => {
       const commandKey = event.key.toLocaleLowerCase();
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (event.defaultPrevented || event.isComposing || target?.closest('[role="dialog"], [role="menu"], input, textarea, select, [contenteditable="true"]')) return;
       if (
         event.metaKey
         && !event.ctrlKey
@@ -2891,35 +2629,16 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
           .catch((cause) => toast.error(cause instanceof Error ? cause.message : String(cause)));
         return;
       }
-      if (
-        event.metaKey
-        && !event.ctrlKey
-        && !event.altKey
-        && !event.shiftKey
-        && /^[1-9]$/.test(event.key)
-      ) {
-        const shortcutThread = flatThreads[Number(event.key) - 1];
-        if (shortcutThread !== undefined) {
-          const hasVisibleRow = Array.from(
-            listRef.current?.querySelectorAll<HTMLElement>("[data-sidebar-thread-shortcut-target][data-sidebar-thread-id]") ?? [],
-          ).some((row) => row.dataset.sidebarThreadId === shortcutThread.id);
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          openSidebarTarget(shortcutThread.id, hasVisibleRow);
-        }
-        return;
-      }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
 
       const list = listRef.current;
       if (list === null) return;
 
-      const target = event.target instanceof HTMLElement ? event.target : null;
       const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const focusInside = activeElement !== null && list.contains(activeElement);
-      const isTyping = target?.matches("input, textarea, select, [contenteditable='true']") ?? false;
 
       if (event.key === "Escape") {
+        if (!focusInside && target !== document.body && target !== document.documentElement) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         const activeSummary = activeElement?.closest<HTMLElement>('[data-threadflow-summary-open="true"]') ?? null;
@@ -2943,21 +2662,7 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
 
       if (event.key === "/" && (focusInside || keepSidebarFocusRef.current)) return;
 
-      if ((isTyping && !keepSidebarFocusRef.current) || (!focusInside && !keepSidebarFocusRef.current)) {
-        if (
-          !isTyping
-          && event.key.length === 1
-          && selectedThreadId !== null
-          && document.documentElement.dataset.threadflowComposerScope !== "new-thread"
-        ) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-          window.dispatchEvent(new CustomEvent<TypeInChatDetail>(TYPE_IN_CHAT_EVENT, {
-            detail: { threadId: selectedThreadId, text: event.key },
-          }));
-        }
-        return;
-      }
+      if (!focusInside || !target?.matches("[data-threadflow-row]")) return;
 
       const rows = Array.from(list.querySelectorAll<HTMLElement>("[data-threadflow-row]"));
       if (rows.length === 0) return;
@@ -3025,10 +2730,9 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
       ref={listRef}
       className="flex h-full min-h-0 flex-col"
     >
-      <ContextSwitchGuard activeThreadId={selectedThreadId} />
       <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
         {threads.map((thread) => <PullRequestProbe key={thread.id} threadId={thread.id} onChange={recordPullRequest} />)}
-        {error === null ? null : <p className="px-2 py-1 text-[10px] text-destructive">{error}</p>}
+        {error === null && loadError === null ? null : <p className="px-2 py-1 text-[10px] text-destructive">{error ?? loadError}</p>}
         <div className="space-y-3">
           {groups.map(([title, groupThreads]) => groupThreads.length === 0 ? null : (
             <section key={title} className={title === "Working" || title === "Waiting" ? "opacity-50" : undefined}>
@@ -3074,17 +2778,29 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
           ))}
         </div>
       </div>
-      <SidebarFooter />
     </div>
   );
 }
 
 function CompactThreadList(props: PluginThreadListProps) {
   const mode = useSidebarMode();
-  return mode === "history" ? <ArchivedThreadList {...props} /> : <ActiveThreadList {...props} />;
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {mode === "history" ? <ArchivedThreadList {...props} /> : <ActiveThreadList {...props} />}
+      </div>
+      <SidebarFooter />
+    </div>
+  );
+}
+
+function ContextSwitchOverlay() {
+  const { threadId } = useBbContext();
+  return <ContextSwitchGuard activeThreadId={threadId} />;
 }
 
 export default definePluginApp((app) => {
+  app.slots.experimental_appOverlay({ id: "context-switch-guard", component: ContextSwitchOverlay });
   app.contentScripts.register({
     id: "hide-host-chrome",
     mount({ signal }) {
@@ -3094,24 +2810,6 @@ export default definePluginApp((app) => {
           [aria-label^="open workspace in " i],
           [aria-label="choose another app to open workspace" i]
         ) { display: none !important; }
-
-        [data-sidebar="footer"] :is(
-          [aria-label="settings" i],
-          [aria-label^="settings (" i],
-          [data-testid="plugin-sidebar-footer-item-connect-remote"],
-          [data-testid="plugin-sidebar-footer-action-connect-remote-access"],
-          [aria-label="remote access" i],
-          [aria-label="report a bug" i]
-        ) { display: none !important; }
-
-        [data-sidebar="sidebar"] :is(button, [role="button"]):is(
-          [aria-label="go back" i],
-          [aria-label="go forward" i]
-        ) { display: none !important; }
-
-        [data-testid="app-sidebar-navigation-divider"] {
-          display: none !important;
-        }
 
         [data-testid="app-page-header-content-row"]:has([data-threadflow-journal-header])
           > :first-child {
@@ -3201,16 +2899,6 @@ export default definePluginApp((app) => {
     mount({ signal }) {
       const style = document.createElement("style");
       style.textContent = NATIVE_COMPOSER_CSS;
-      document.head.append(style);
-      signal.addEventListener("abort", () => style.remove(), { once: true });
-      return () => style.remove();
-    },
-  });
-  app.contentScripts.register({
-    id: "instant-sidebar-motion",
-    mount({ signal }) {
-      const style = document.createElement("style");
-      style.textContent = INSTANT_SIDEBAR_CSS;
       document.head.append(style);
       signal.addEventListener("abort", () => style.remove(), { once: true });
       return () => style.remove();

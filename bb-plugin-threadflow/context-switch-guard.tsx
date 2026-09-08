@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import * as Dialog from "@radix-ui/react-dialog";
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import { useBrowserDimmingModal } from "./hooks/useBrowserDimmingModal";
+import { usePortalScopeProps } from "./lib/portal-scope";
 import type { rpcContract } from "./server";
 
 const SWITCH_WINDOW_MS = 2 * 60_000;
@@ -21,6 +21,7 @@ type ThreadSwitch = {
 };
 
 export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string | null }) {
+  const portalScope = usePortalScopeProps();
   const rpc = useRpc<typeof rpcContract>();
   const previousThreadId = useRef<string | null>(activeThreadId);
   const switches = useRef<ThreadSwitch[]>([]);
@@ -79,8 +80,6 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
     return () => window.clearTimeout(timer);
   }, [rpc, scratchpad, scratchpadReady]);
 
-  useBrowserDimmingModal(visibleSwitchCount !== null);
-
   const dismiss = useCallback(() => {
     setVisibleSwitchCount(null);
     switches.current = [];
@@ -105,25 +104,12 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
     }
   }, [activeThreadId]);
 
-  useEffect(() => {
-    if (visibleSwitchCount === null) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      dismiss();
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [dismiss, visibleSwitchCount]);
-
   if (visibleSwitchCount === null) return null;
-  return createPortal(
-    <div
-      data-bb-plugin="threadflow"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="context-switch-guard-title"
+  return (
+    <Dialog.Root open onOpenChange={(open) => { if (!open) dismiss(); }}>
+    <Dialog.Portal>
+    <Dialog.Content
+      {...portalScope}
       className="fixed inset-0 z-[1000] grid overflow-hidden bg-slate-950 p-6 text-white"
     >
       <video
@@ -138,12 +124,12 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
       />
       <div className="pointer-events-none absolute inset-0 bg-black/30" />
       <div className="relative m-auto w-full max-w-md rounded-2xl bg-black/40 px-8 py-7 text-center shadow-2xl backdrop-blur-xl">
-        <h2 id="context-switch-guard-title" className="text-2xl font-normal text-white">
+        <Dialog.Title className="text-2xl font-normal text-white">
           Take a breather.
-        </h2>
-        <p className="mt-3 text-sm leading-relaxed text-white/80">
+        </Dialog.Title>
+        <Dialog.Description className="mt-3 text-sm leading-relaxed text-white/80">
           You switched threads {visibleSwitchCount} times in under two minutes. Step away for a minute before opening another one.
-        </p>
+        </Dialog.Description>
         <label htmlFor="context-switch-workout-scratchpad" className="mt-5 block text-left text-xs font-medium text-white/70">
           Pushups / pullups scratchpad
         </label>
@@ -168,7 +154,8 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
           Got it
         </button>
       </div>
-    </div>,
-    document.body,
+    </Dialog.Content>
+    </Dialog.Portal>
+    </Dialog.Root>
   );
 }

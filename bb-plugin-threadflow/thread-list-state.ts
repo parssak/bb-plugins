@@ -14,6 +14,7 @@ export type ThreadListState = "needs-you" | "waiting" | "working";
 const ACTIVE_STATUSES = new Set(["active", "starting", "stopping"]);
 
 export function classifyThreadListState(thread: ThreadListStateInput): ThreadListState {
+  if (thread.needsAttention || thread.sideChats.some((sideChat) => sideChat.needsAttention)) return "needs-you";
   const sideChatInProgress = thread.sideChats.some((sideChat) => (
     sideChat.running && !sideChat.needsAttention
   ));
