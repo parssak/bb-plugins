@@ -166,6 +166,7 @@ test("thread list nests every active child under its canonical parent", async ()
     needsAttention: false,
     running: false,
     closeable: true,
+    openInPanel: true,
   }, {
     id: ordinaryIdleSideChat.id,
     title: ordinaryIdleSideChat.title,
@@ -174,6 +175,7 @@ test("thread list nests every active child under its canonical parent", async ()
     needsAttention: false,
     running: false,
     closeable: true,
+    openInPanel: true,
   }, {
     id: visibleChild.id,
     title: visibleChild.title,
@@ -182,6 +184,7 @@ test("thread list nests every active child under its canonical parent", async ()
     needsAttention: false,
     running: false,
     closeable: false,
+    openInPanel: false,
   }]);
   assert.equal(result.threads.some((thread) => thread.id === visibleChild.id), false);
   assert.equal(result.threads.some((thread) => thread.id === hiddenRoot.id), false);

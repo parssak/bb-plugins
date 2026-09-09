@@ -43,6 +43,7 @@ const sideChatSchema = z.object({
   needsAttention: z.boolean(),
   running: z.boolean(),
   closeable: z.boolean(),
+  openInPanel: z.boolean(),
 });
 const chatSummarySchema = z.object({
   threadId: z.string(),
@@ -650,6 +651,7 @@ export default function plugin(bb: BbPluginApi) {
         needsAttention: false,
         running: isRunningStatus(currentThread.status),
         closeable: true,
+        openInPanel: true,
       },
     };
   };
@@ -1157,6 +1159,9 @@ export default function plugin(bb: BbPluginApi) {
           || sideChat.archivedAt !== null
         ) continue;
         const chats = sideChatsBySource.get(sideChat.parentThreadId) ?? [];
+        const isThreadflowSideChat = sideChat.visibility === "hidden"
+          && sideChat.originKind === "fork"
+          && sideChat.originPluginId === bb.pluginId;
         chats.push({
           id: sideChat.id,
           title: sideChat.title?.trim() || sideChat.titleFallback?.trim() || `Side chat ${chats.length + 1}`,
@@ -1164,7 +1169,8 @@ export default function plugin(bb: BbPluginApi) {
           createdAt: sideChat.createdAt,
           needsAttention: sideChat.hasPendingInteraction,
           running: isRunningStatus(sideChat.status),
-          closeable: sideChat.visibility === "hidden" && sideChat.originKind === "fork",
+          closeable: isThreadflowSideChat,
+          openInPanel: isThreadflowSideChat,
         });
         sideChatsBySource.set(sideChat.parentThreadId, chats);
       }

@@ -59,3 +59,71 @@ test("sidebar leaves unrelated controls and dialogs in charge of keyboard input"
   dialog.remove();
   slot.lifecycle.unmount();
 });
+
+test("visible child rows use BB's native split-thread navigation", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const child = {
+    id: "thread-child",
+    title: "Delegated task",
+    sourceThreadId: "thread-parent",
+    createdAt: 2,
+    needsAttention: false,
+    running: true,
+    closeable: false,
+    openInPanel: false,
+  };
+  const slot = renderSlot(app.threadLists[0]!, {
+    activeThreadId: "thread-parent", activeProjectId: null, isCompactViewport: false,
+    onNavigate: () => {}, searchQuery: "", Original: () => null,
+  }, { rpc: {
+    threads: () => ({ threads: [{ id: "thread-parent", title: "Parent thread", projectId: "personal", project: "Personal", provider: "codex", createdAt: 1, updatedAt: 1, archivedAt: null, archived: false, needsAttention: false, queuedWork: "none", scheduledSendAt: null, waitingForThreadIds: [], status: "idle", sideChats: [child] }], generatedAt: 1 }),
+    codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
+  } });
+
+  fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Delegated task" })));
+
+  expect(slot.inspection.sidebarActionCalls).toContainEqual({
+    method: "open",
+    threadId: "thread-child",
+    options: { split: true },
+  });
+  expect(slot.inspection.navigateCalls.some((call) => call.method === "openThreadPanel")).toBe(false);
+  slot.lifecycle.unmount();
+});
+
+test("hidden Threadflow reviews retry until the parent panel is ready", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  let attempts = 0;
+  const review = {
+    id: "thread-review",
+    title: "Review",
+    sourceThreadId: "thread-parent",
+    createdAt: 2,
+    needsAttention: false,
+    running: true,
+    closeable: true,
+    openInPanel: true,
+  };
+  const slot = renderSlot(app.threadLists[0]!, {
+    activeThreadId: "thread-parent", activeProjectId: null, isCompactViewport: false,
+    onNavigate: () => {}, searchQuery: "", Original: () => null,
+  }, {
+    openThreadPanel: () => {
+      attempts += 1;
+      return attempts >= 2;
+    },
+    rpc: {
+      threads: () => ({ threads: [{ id: "thread-parent", title: "Parent thread", projectId: "personal", project: "Personal", provider: "codex", createdAt: 1, updatedAt: 1, archivedAt: null, archived: false, needsAttention: false, queuedWork: "none", scheduledSendAt: null, waitingForThreadIds: [], status: "idle", sideChats: [review] }], generatedAt: 1 }),
+      codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
+    },
+  });
+
+  fireEvent.click(await waitFor(() => slot.getByRole("button", { name: "Review" })));
+
+  await waitFor(() => expect(attempts).toBe(2));
+  expect(slot.inspection.navigateCalls.filter((call) => call.method === "openThreadPanel")).toEqual([
+    { method: "openThreadPanel", options: { actionId: "side-chat", title: "Review", params: { childThreadId: "thread-review" } } },
+    { method: "openThreadPanel", options: { actionId: "side-chat", title: "Review", params: { childThreadId: "thread-review" } } },
+  ]);
+  slot.lifecycle.unmount();
+});

@@ -91,6 +91,8 @@ const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 const REVIEW_WORKTREE_PROMPT = "Review the changes in this worktree";
 const ASK_LINUS_PROMPT = "how would linus torvalds feel about this";
 const WAITING_COLLAPSED_STORAGE_KEY = "threadflow:waiting-collapsed:v1";
+const SIDE_CHAT_PANEL_OPEN_RETRY_MS = 50;
+const SIDE_CHAT_PANEL_OPEN_MAX_ATTEMPTS = 20;
 type SidebarMode = "threads" | "history";
 let sidebarMode: SidebarMode = "threads";
 const sidebarModeListeners = new Set<() => void>();
@@ -2544,15 +2546,39 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
   useEffect(() => {
     if (pendingSideChat === null || activeThreadId !== pendingSideChat.sideChat.sourceThreadId) return;
     const { sideChat, keepSidebarFocus } = pendingSideChat;
-    if (!navigate.openThreadPanel({
-      actionId: "side-chat",
-      title: sideChat.title,
-      params: { childThreadId: sideChat.id },
-    })) return;
-    setPendingSideChat(null);
-    setSelectedThreadId(sideChat.id);
-    onNavigate();
-    if (keepSidebarFocus) window.requestAnimationFrame(() => focusSidebarRow(sideChat.id));
+    let cancelled = false;
+    let timer: number | null = null;
+    let attempts = 0;
+    const clearPendingSideChat = () => {
+      setPendingSideChat((current) => current?.sideChat.id === sideChat.id ? null : current);
+    };
+    const openPanel = () => {
+      if (cancelled) return;
+      attempts += 1;
+      if (navigate.openThreadPanel({
+        actionId: "side-chat",
+        title: sideChat.title,
+        params: { childThreadId: sideChat.id },
+      })) {
+        clearPendingSideChat();
+        setSelectedThreadId(sideChat.id);
+        onNavigate();
+        if (keepSidebarFocus) window.requestAnimationFrame(() => focusSidebarRow(sideChat.id));
+        return;
+      }
+      if (attempts >= SIDE_CHAT_PANEL_OPEN_MAX_ATTEMPTS) {
+        clearPendingSideChat();
+        setSelectedThreadId(sideChat.sourceThreadId);
+        toast.error(`Could not open ${sideChat.title}`);
+        return;
+      }
+      timer = window.setTimeout(openPanel, SIDE_CHAT_PANEL_OPEN_RETRY_MS);
+    };
+    openPanel();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
   }, [activeThreadId, focusSidebarRow, navigate, onNavigate, pendingSideChat]);
 
   const openThread = useCallback((threadId: string, keepSidebarFocus = false) => {
@@ -2570,9 +2596,16 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
     keepSidebarFocusRef.current = keepSidebarFocus;
     setKeyboardFocusMode(keepSidebarFocus ? "sidebar" : "chat");
     setSelectedThreadId(sideChat.id);
+    if (!sideChat.openInPanel) {
+      setPendingSideChat(null);
+      actions.open(sideChat.id, { split: true });
+      onNavigate();
+      if (keepSidebarFocus) window.requestAnimationFrame(() => focusSidebarRow(sideChat.id));
+      return;
+    }
     setPendingSideChat({ sideChat, keepSidebarFocus });
     if (activeThreadId !== sideChat.sourceThreadId) actions.open(sideChat.sourceThreadId);
-  }, [actions, activeThreadId]);
+  }, [actions, activeThreadId, focusSidebarRow, onNavigate]);
 
   const openSidebarTarget = useCallback((threadId: string, keepSidebarFocus = false) => {
     const sideChat = threads.flatMap((thread) => thread.sideChats).find((candidate) => candidate.id === threadId);
