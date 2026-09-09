@@ -43,7 +43,7 @@ const sideChatSchema = z.object({
   needsAttention: z.boolean(),
   running: z.boolean(),
   closeable: z.boolean(),
-  openInPanel: z.boolean(),
+  navigation: z.enum(["thread", "split"]),
 });
 const chatSummarySchema = z.object({
   threadId: z.string(),
@@ -651,7 +651,7 @@ export default function plugin(bb: BbPluginApi) {
         needsAttention: false,
         running: isRunningStatus(currentThread.status),
         closeable: true,
-        openInPanel: true,
+        navigation: "thread" as const,
       },
     };
   };
@@ -1170,7 +1170,7 @@ export default function plugin(bb: BbPluginApi) {
           needsAttention: sideChat.hasPendingInteraction,
           running: isRunningStatus(sideChat.status),
           closeable: isThreadflowSideChat,
-          openInPanel: isThreadflowSideChat,
+          navigation: isThreadflowSideChat ? "thread" : "split",
         });
         sideChatsBySource.set(sideChat.parentThreadId, chats);
       }

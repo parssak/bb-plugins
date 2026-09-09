@@ -91,8 +91,6 @@ const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 const REVIEW_WORKTREE_PROMPT = "Review the changes in this worktree";
 const ASK_LINUS_PROMPT = "how would linus torvalds feel about this";
 const WAITING_COLLAPSED_STORAGE_KEY = "threadflow:waiting-collapsed:v1";
-const SIDE_CHAT_PANEL_OPEN_RETRY_MS = 50;
-const SIDE_CHAT_PANEL_OPEN_MAX_ATTEMPTS = 20;
 type SidebarMode = "threads" | "history";
 let sidebarMode: SidebarMode = "threads";
 const sidebarModeListeners = new Set<() => void>();
@@ -1891,13 +1889,16 @@ function SidebarThreadRow({
                 ? "flex w-full items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-left text-[10px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
                 : "flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-left text-[10px] text-muted-foreground outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"}
             >
-              <button
-                type="button"
+              <a
+                href={`/threads/${encodeURIComponent(sideChat.id)}`}
+                aria-label={sideChat.title}
                 data-threadflow-row
                 data-thread-id={sideChat.id}
                 data-side-chat-id={sideChat.id}
                 data-source-thread-id={sideChat.sourceThreadId}
                 onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                  event.preventDefault();
                   event.stopPropagation();
                   onOpenSideChat(sideChat);
                 }}
@@ -1914,7 +1915,7 @@ function SidebarThreadRow({
                 >
                   <ThreadTitleContent title={sideChat.title} />
                 </span>
-              </button>
+              </a>
               {sideChat.closeable ? (
                 <button
                   type="button"
@@ -2487,10 +2488,6 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
   const navigate = useBbNavigate();
   const { threads, error: loadError, refresh } = useThreadflowThreads("recent");
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(activeThreadId);
-  const [pendingSideChat, setPendingSideChat] = useState<{
-    sideChat: NativeSideChat;
-    keepSidebarFocus: boolean;
-  } | null>(null);
   const [pullRequests, setPullRequests] = useState<Record<string, PluginSidebarPullRequest | null>>({});
   const [error, setError] = useState<string | null>(null);
   const [waitingCollapsed, setWaitingCollapsed] = useState(() => {
@@ -2543,44 +2540,6 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
     row?.scrollIntoView({ block: "nearest" });
   }, []);
 
-  useEffect(() => {
-    if (pendingSideChat === null || activeThreadId !== pendingSideChat.sideChat.sourceThreadId) return;
-    const { sideChat, keepSidebarFocus } = pendingSideChat;
-    let cancelled = false;
-    let timer: number | null = null;
-    let attempts = 0;
-    const clearPendingSideChat = () => {
-      setPendingSideChat((current) => current?.sideChat.id === sideChat.id ? null : current);
-    };
-    const openPanel = () => {
-      if (cancelled) return;
-      attempts += 1;
-      if (navigate.openThreadPanel({
-        actionId: "side-chat",
-        title: sideChat.title,
-        params: { childThreadId: sideChat.id },
-      })) {
-        clearPendingSideChat();
-        setSelectedThreadId(sideChat.id);
-        onNavigate();
-        if (keepSidebarFocus) window.requestAnimationFrame(() => focusSidebarRow(sideChat.id));
-        return;
-      }
-      if (attempts >= SIDE_CHAT_PANEL_OPEN_MAX_ATTEMPTS) {
-        clearPendingSideChat();
-        setSelectedThreadId(sideChat.sourceThreadId);
-        toast.error(`Could not open ${sideChat.title}`);
-        return;
-      }
-      timer = window.setTimeout(openPanel, SIDE_CHAT_PANEL_OPEN_RETRY_MS);
-    };
-    openPanel();
-    return () => {
-      cancelled = true;
-      if (timer !== null) window.clearTimeout(timer);
-    };
-  }, [activeThreadId, focusSidebarRow, navigate, onNavigate, pendingSideChat]);
-
   const openThread = useCallback((threadId: string, keepSidebarFocus = false) => {
     keepSidebarFocusRef.current = keepSidebarFocus;
     setKeyboardFocusMode(keepSidebarFocus ? "sidebar" : "chat");
@@ -2596,16 +2555,14 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
     keepSidebarFocusRef.current = keepSidebarFocus;
     setKeyboardFocusMode(keepSidebarFocus ? "sidebar" : "chat");
     setSelectedThreadId(sideChat.id);
-    if (!sideChat.openInPanel) {
-      setPendingSideChat(null);
+    if (sideChat.navigation === "thread") {
+      navigate.toThread(sideChat.id);
+    } else {
       actions.open(sideChat.id, { split: true });
-      onNavigate();
-      if (keepSidebarFocus) window.requestAnimationFrame(() => focusSidebarRow(sideChat.id));
-      return;
     }
-    setPendingSideChat({ sideChat, keepSidebarFocus });
-    if (activeThreadId !== sideChat.sourceThreadId) actions.open(sideChat.sourceThreadId);
-  }, [actions, activeThreadId, focusSidebarRow, onNavigate]);
+    onNavigate();
+    if (keepSidebarFocus) window.requestAnimationFrame(() => focusSidebarRow(sideChat.id));
+  }, [actions, focusSidebarRow, navigate, onNavigate]);
 
   const openSidebarTarget = useCallback((threadId: string, keepSidebarFocus = false) => {
     const sideChat = threads.flatMap((thread) => thread.sideChats).find((candidate) => candidate.id === threadId);
