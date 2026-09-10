@@ -886,7 +886,8 @@ function WorktreeChangesBadge({ changes }: { changes: WorktreeChanges }) {
       <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" className="size-3">
         <path d="M3 4.5h3M4.5 3v3M10 4.5h3M10 11.5h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
       </svg>
-      <span>{filesLabel}</span>
+      <span>{changes.fileCount}</span>
+      <span aria-hidden="true">·</span>
       <span>+{changes.additions}</span>
       <span>−{changes.deletions}</span>
     </span>
@@ -911,7 +912,6 @@ function ChatAccentHeader({ target, compact = false }: { target: ChatTarget; com
     : project === "usebogi.com"
       ? null
       : project;
-  const compactLabel = target.worktree;
 
   useEffect(() => {
     if (pullRequest === null) {
@@ -980,11 +980,6 @@ function ChatAccentHeader({ target, compact = false }: { target: ChatTarget; com
           <span>{label}</span>
         </>
       )}
-      {compact && compactLabel !== null ? (
-        <span className={target.worktree !== null ? "max-w-52 truncate font-mono" : "max-w-20 truncate"} title={compactLabel}>
-          {compactLabel}
-        </span>
-      ) : null}
       {compact ? null : <span className={label === null ? "h-1 flex-1" : "h-px flex-1"} style={{ backgroundColor: accent.color }} aria-hidden="true" />}
       {worktreeChanges === null ? null : <WorktreeChangesBadge changes={worktreeChanges} />}
       {pullRequest === null || checksLabel === null ? null : (
