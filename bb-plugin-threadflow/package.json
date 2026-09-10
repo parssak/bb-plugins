@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "node --test && vitest run sidebar.test.tsx sidebar-peek.test.tsx",
+    "test": "node --test && vitest run sidebar.test.tsx sidebar-peek.test.tsx sidebar-layout.test.tsx",
     "check": "tsc --noEmit"
   },
   "engines": {
