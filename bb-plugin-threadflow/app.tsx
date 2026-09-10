@@ -144,6 +144,15 @@ const NATIVE_STEER_HEADER_SELECTOR = `:scope > [class~="mb-1"][class~="justify-e
 // Host-owned controls have no visibility API. Keep these cosmetic overrides
 // isolated; navigation items themselves are omitted through the SDK slot.
 const COMPACT_SIDEBAR_CSS = `
+  /* The desktop panel is already fixed; remove its layout spacer so toggling
+     it overlays the page without resizing chat, previews, or split panes. */
+  [data-sidebar="gap"] {
+    width: 0 !important;
+  }
+  [data-sidebar="gap"] + [data-sidebar="panel"] {
+    z-index: 40;
+    box-shadow: 8px 0 24px rgb(0 0 0 / 0.16);
+  }
   /* Disable shell open/close motion, not animations inside sidebar content. */
   [data-sidebar="gap"],
   [data-sidebar="panel"] {
