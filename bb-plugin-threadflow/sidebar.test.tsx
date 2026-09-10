@@ -122,3 +122,47 @@ test("hidden Threadflow reviews navigate directly to the review thread", async (
   expect(slot.inspection.navigateCalls.some((call) => call.method === "openThreadPanel")).toBe(false);
   slot.lifecycle.unmount();
 });
+
+test("sidebar replays a realtime refresh that arrives during an existing load", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const activeThread = {
+    id: "thread-race",
+    title: "Archived while loading",
+    projectId: "personal",
+    project: "Personal",
+    provider: "codex",
+    createdAt: 1,
+    updatedAt: 1,
+    archivedAt: null,
+    archived: false,
+    needsAttention: false,
+    queuedWork: "none",
+    scheduledSendAt: null,
+    waitingForThreadIds: [],
+    status: "idle",
+    sideChats: [],
+  };
+  let resolveFirstLoad: ((value: { threads: typeof activeThread[]; generatedAt: number }) => void) | undefined;
+  let threadLoads = 0;
+  const slot = renderSlot(app.threadLists[0]!, {
+    activeThreadId: null, activeProjectId: null, isCompactViewport: false,
+    onNavigate: () => {}, searchQuery: "", Original: () => null,
+  }, { rpc: {
+    threads: () => {
+      threadLoads += 1;
+      if (threadLoads === 1) {
+        return new Promise((resolve) => { resolveFirstLoad = resolve; });
+      }
+      return { threads: [], generatedAt: 2 };
+    },
+    codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
+  } });
+
+  await waitFor(() => expect(threadLoads).toBe(1));
+  await slot.behavior.emitRealtime("threads-changed", null);
+  resolveFirstLoad?.({ threads: [activeThread], generatedAt: 1 });
+
+  await waitFor(() => expect(threadLoads).toBe(2));
+  await waitFor(() => expect(slot.queryByRole("link", { name: activeThread.title })).toBeNull());
+  slot.lifecycle.unmount();
+});

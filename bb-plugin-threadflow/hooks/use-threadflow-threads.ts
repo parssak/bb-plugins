@@ -8,6 +8,7 @@ type Snapshot = { threads: NativeThread[]; error: string | null };
 function createStore() {
   let snapshot: Snapshot = { threads: [], error: null };
   let pending: Promise<void> | null = null;
+  let refreshQueued = false;
   let timer: ReturnType<typeof setInterval> | undefined;
   let consumers = 0;
   const listeners = new Set<() => void>();
@@ -22,11 +23,21 @@ function createStore() {
       return () => { listeners.delete(listener); };
     },
     refresh(load: () => Promise<{ threads: NativeThread[] }>) {
-      if (pending !== null) return pending;
-      pending = load().then(
-        ({ threads }) => publish({ threads, error: null }),
-        (cause: unknown) => publish({ ...snapshot, error: cause instanceof Error ? cause.message : String(cause) }),
-      ).finally(() => { pending = null; });
+      if (pending !== null) {
+        refreshQueued = true;
+        return pending;
+      }
+      pending = (async () => {
+        do {
+          refreshQueued = false;
+          try {
+            const { threads } = await load();
+            publish({ threads, error: null });
+          } catch (cause) {
+            publish({ ...snapshot, error: cause instanceof Error ? cause.message : String(cause) });
+          }
+        } while (refreshQueued);
+      })().finally(() => { pending = null; });
       return pending;
     },
     retain(refresh: () => Promise<void>) {
