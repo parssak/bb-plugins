@@ -1,9 +1,47 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test } from "vitest";
 import { fireEvent, waitFor, cleanup } from "@testing-library/react";
-import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
+import { loadPluginApp, mountPluginContentScripts, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 
 afterEach(cleanup);
+
+test("compact sidebar shortcut uses the native toggle and leaves other shortcuts alone", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const scripts = await mountPluginContentScripts({
+    ...app,
+    contentScripts: app.contentScripts.filter(({ id }) => id === "compact-sidebar-shortcut"),
+  }, { pluginId: "threadflow", generation: 1 });
+  const panel = document.createElement("div");
+  panel.dataset.sidebar = "panel";
+  panel.dataset.vaulDrawerDirection = "left";
+  const trigger = document.createElement("button");
+  trigger.dataset.sidebar = "trigger";
+  let clicks = 0;
+  trigger.onclick = () => { clicks += 1; };
+  document.body.append(panel, trigger);
+  const toggle = (shiftKey = false) => {
+    const event = new KeyboardEvent("keydown", { key: "b", metaKey: true, shiftKey, bubbles: true, cancelable: true });
+    window.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  try {
+    expect(toggle()).toBe(true);
+    expect(toggle()).toBe(true);
+    expect(clicks).toBe(2);
+    expect(toggle(true)).toBe(false);
+    panel.remove();
+    expect(toggle()).toBe(false);
+    expect(clicks).toBe(2);
+    document.body.append(panel);
+    await scripts.lifecycle.dispose();
+    expect(toggle()).toBe(false);
+    expect(clicks).toBe(2);
+  } finally {
+    await scripts.lifecycle.dispose();
+    panel.remove();
+    trigger.remove();
+  }
+});
 
 test("compact navigation omits host destinations without a private DOM portal target", async () => {
   const app = await loadPluginApp(() => import("./app"));

@@ -144,6 +144,14 @@ const NATIVE_STEER_HEADER_SELECTOR = `:scope > [class~="mb-1"][class~="justify-e
 // Host-owned controls have no visibility API. Keep these cosmetic overrides
 // isolated; navigation items themselves are omitted through the SDK slot.
 const COMPACT_SIDEBAR_CSS = `
+  :root { --threadflow-chrome-leading: 48px; }
+  :root:has([data-testid="app-desktop-sidebar-trigger"][class~="left-[84px]"]) {
+    --threadflow-chrome-leading: 132px;
+  }
+  [data-testid="app-page-header-content-row"] {
+    padding-left: calc(var(--threadflow-chrome-leading) - 16px) !important;
+    transition: none !important;
+  }
   /* The desktop panel is already fixed; remove its layout spacer so toggling
      it overlays the page without resizing chat, previews, or split panes. */
   [data-sidebar="gap"] {
@@ -169,7 +177,7 @@ const COMPACT_SIDEBAR_CSS = `
     height: var(--bb-app-chrome-row-height);
     display: flex;
     align-items: center;
-    padding-left: 48px;
+    padding-left: var(--threadflow-chrome-leading);
     padding-right: 8px;
     position: relative;
     pointer-events: none;
@@ -2923,6 +2931,24 @@ export default definePluginApp((app) => {
       };
       signal.addEventListener("abort", cleanup, { once: true });
       return cleanup;
+    },
+  });
+  app.contentScripts.register({
+    id: "compact-sidebar-shortcut",
+    mount({ signal }) {
+      const onKeyDown = (event: KeyboardEvent) => {
+        if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey
+          || event.repeat || event.key.toLowerCase() !== "b") return;
+        // The host command changes desktop state even while its compact drawer
+        // is mounted. The native button already dispatches to the correct state.
+        if (!document.querySelector('[data-sidebar="panel"][data-vaul-drawer-direction]')) return;
+        const trigger = document.querySelector<HTMLButtonElement>('[data-sidebar="trigger"]');
+        if (!trigger) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        trigger.click();
+      };
+      window.addEventListener("keydown", onKeyDown, { capture: true, signal });
     },
   });
   app.contentScripts.register({
