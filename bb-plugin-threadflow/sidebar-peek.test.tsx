@@ -21,14 +21,14 @@ test("releasing during a delayed drawer open still restores closed state", async
     window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta" }));
     await vi.advanceTimersByTimeAsync(400);
     expect(panel.dataset.state).toBe("closed");
-    expect(document.documentElement.hasAttribute("data-threadflow-sidebar-peek")).toBe(false);
+    expect(document.documentElement.hasAttribute("data-threadflow-sidebar-floating")).toBe(false);
   } finally {
     controller.abort();
     shell.remove();
   }
 });
 
-test.each([false, true])("holding Command restores only its temporary sidebar (compact=%s)", (compact) => {
+test.each([false, true])("holding Command restores only its temporary sidebar (compact=%s)", async (compact) => {
   vi.useFakeTimers();
   const controller = new AbortController();
   const shell = document.createElement("div");
@@ -63,8 +63,16 @@ test.each([false, true])("holding Command restores only its temporary sidebar (c
     release();
     hold();
     expect(open).toBe(true);
+    expect(document.documentElement.hasAttribute("data-threadflow-sidebar-floating")).toBe(true);
+    key("keydown", "1");
+    setOpen(false); // Thread navigation may close the host sidebar.
+    await Promise.resolve();
+    expect(open).toBe(true); // Keep it visible while Command remains held.
+    key("keyup", "1");
+    expect(open).toBe(true);
     release();
     expect(open).toBe(false);
+    expect(document.documentElement.hasAttribute("data-threadflow-sidebar-floating")).toBe(false);
     setOpen(true);
     hold(); release();
     expect(open).toBe(true); // A previously open sidebar stays open.
@@ -80,7 +88,7 @@ test.each([false, true])("holding Command restores only its temporary sidebar (c
     hold();
     controller.abort();
     expect(open).toBe(false);
-    expect(document.documentElement.hasAttribute("data-threadflow-sidebar-peek")).toBe(false);
+    expect(document.documentElement.hasAttribute("data-threadflow-sidebar-floating")).toBe(false);
     hold();
     expect(open).toBe(false);
   } finally {

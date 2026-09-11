@@ -39,7 +39,6 @@ import type { NativeSideChat, NativeThread, QueuedThreadWait, rpcContract } from
 import type { ActiveThreadflowWait } from "./wait-service";
 import { SidebarFooter } from "./sidebar-usage";
 import { mountSidebarPeek } from "./sidebar-peek";
-import { mountSidebarLayout } from "./sidebar-layout";
 import { ContextSwitchGuard } from "./context-switch-guard";
 import { useThreadflowThreads } from "./hooks/use-threadflow-threads";
 import { toast } from "sonner";
@@ -163,11 +162,11 @@ const COMPACT_SIDEBAR_CSS = `
     z-index: 40;
     box-shadow: 8px 0 24px rgb(0 0 0 / 0.16);
   }
-  :root[data-threadflow-sidebar-floating][data-threadflow-sidebar-peek] [data-sidebar="inset"][data-sidebar-shelf] {
+  :root[data-threadflow-sidebar-floating] [data-sidebar="inset"][data-sidebar-shelf] {
     translate: none !important;
     transition: none !important;
   }
-  :root[data-threadflow-sidebar-floating][data-threadflow-sidebar-peek] [data-sidebar="panel"][data-vaul-drawer-direction] {
+  :root[data-threadflow-sidebar-floating] [data-sidebar="panel"][data-vaul-drawer-direction] {
     z-index: 41;
     box-shadow: 8px 0 24px rgb(0 0 0 / 0.16);
   }
@@ -2938,7 +2937,6 @@ export default definePluginApp((app) => {
       return cleanup;
     },
   });
-  app.contentScripts.register({ id: "sidebar-layout", mount: mountSidebarLayout });
   app.contentScripts.register({ id: "sidebar-peek", mount: mountSidebarPeek });
   app.contentScripts.register({
     id: "compact-sidebar-shortcut",

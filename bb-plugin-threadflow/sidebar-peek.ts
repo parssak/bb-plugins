@@ -4,6 +4,7 @@ export function mountSidebarPeek({ signal }: { signal: AbortSignal }) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let peeking = false;
   let released = false;
+  let opening = false;
   let closing = false;
   let opened = false;
   const root = document.documentElement;
@@ -21,7 +22,8 @@ export function mountSidebarPeek({ signal }: { signal: AbortSignal }) {
   };
   const clearPeek = () => {
     peeking = false;
-    root.removeAttribute("data-threadflow-sidebar-peek");
+    opening = false;
+    root.removeAttribute("data-threadflow-sidebar-floating");
     if (signal.aborted) observer.disconnect();
   };
   // Compact drawers finish opening/closing asynchronously. A quick release
@@ -29,16 +31,28 @@ export function mountSidebarPeek({ signal }: { signal: AbortSignal }) {
   const reconcile = () => {
     if (!peeking) return;
     const open = isOpen();
-    if (open) opened = true;
-    if (opened && !open) clearPeek();
-    else if (released && !closing && open) {
+    if (open) {
+      opened = true;
+      opening = false;
+    }
+    if (!released && opened && !open && !opening) {
+      opening = true;
+      trigger()?.click();
+    } else if (released && !closing && open) {
       closing = true;
       trigger()?.click();
       if (!isOpen()) clearPeek();
+    } else if (released && opened && !open && !opening) {
+      clearPeek();
     }
   };
   const observer = new MutationObserver(reconcile);
-  observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-state"] });
+  observer.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["data-state"],
+  });
   const finish = () => {
     cancelTimer();
     released = true;
@@ -54,9 +68,10 @@ export function mountSidebarPeek({ signal }: { signal: AbortSignal }) {
         if (!panel() || !button || isOpen()) return;
         peeking = true;
         released = false;
+        opening = true;
         closing = false;
         opened = false;
-        root.setAttribute("data-threadflow-sidebar-peek", "");
+        root.setAttribute("data-threadflow-sidebar-floating", "");
         button.click();
         reconcile();
       }, 200);
