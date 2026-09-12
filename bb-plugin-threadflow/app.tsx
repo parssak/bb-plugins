@@ -1,3 +1,4 @@
+import { JournalAppearanceOverlay, openJournalAppearance } from "./journal-appearance-overlay";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -285,8 +286,9 @@ const JOURNAL_EDITOR_CSS = `
     min-height: 100%;
     padding-bottom: 35vh;
     color: var(--foreground);
-    font-size: 1rem;
-    line-height: 1.75;
+    font-size: var(--journal-font-size, 16px);
+    line-height: var(--journal-line-height, 1.75);
+    letter-spacing: var(--journal-letter-spacing, 0px);
     outline: none;
     overflow-wrap: break-word;
     tab-size: 2;
@@ -299,7 +301,7 @@ const JOURNAL_EDITOR_CSS = `
   }
 
   .threadflow-journal-editor .tiptap p {
-    margin-top: 1em;
+    margin-top: var(--journal-paragraph-spacing, 1em);
   }
 
   .threadflow-journal-editor .tiptap :is(h1, h2, h3, h4, h5, h6) {
@@ -348,7 +350,7 @@ const JOURNAL_EDITOR_CSS = `
     flex: 0 0 auto;
     align-items: center;
     width: 16px;
-    height: 1.75em;
+    height: calc(var(--journal-line-height, 1.75) * 1em);
     user-select: none;
   }
 
@@ -2356,7 +2358,7 @@ function JournalDay({ dateKey }: { dateKey: string }) {
   }
 
   return (
-    <main className="mx-auto flex h-full w-full max-w-3xl flex-col px-6 pb-8 pt-2 md:px-10 md:pb-10 md:pt-3">
+    <main className="threadflow-journal-document mx-auto flex h-full w-full flex-col px-6 pb-8 md:px-10 md:pb-10" style={{ maxWidth: "var(--journal-document-width, 768px)", paddingTop: "var(--journal-top-padding, 12px)" }}>
       <JournalMarkdownEditor
         initialMarkdown={content}
         ariaLabel={`Journal for ${heading}`}
@@ -2860,6 +2862,12 @@ function ContextSwitchOverlay() {
 }
 
 export default definePluginApp((app) => {
+  app.slots.commandPaletteAction({
+    id: "adjust-journal-ui",
+    title: "Adjust journal UI",
+    run: openJournalAppearance,
+  });
+  app.slots.experimental_appOverlay({ id: "journal-appearance", component: JournalAppearanceOverlay });
   app.slots.experimental_appOverlay({ id: "context-switch-guard", component: ContextSwitchOverlay });
   app.contentScripts.register({
     id: "hide-host-chrome",

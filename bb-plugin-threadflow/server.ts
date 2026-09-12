@@ -1,3 +1,4 @@
+import { journalAppearanceSchema, DEFAULT_JOURNAL_APPEARANCE, JOURNAL_APPEARANCE_KEY, JOURNAL_APPEARANCE_CHANNEL } from "./journal-appearance.ts";
 import { spawn } from "node:child_process";
 import { defineRpcContract, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -152,6 +153,14 @@ export const rpcContract = defineRpcContract({
         message: z.string(),
       }).strict(),
     ]),
+  },
+  journal_appearance: {
+    input: z.object({}).strict(),
+    output: journalAppearanceSchema,
+  },
+  save_journal_appearance: {
+    input: journalAppearanceSchema,
+    output: journalAppearanceSchema,
   },
   workout_scratchpad: {
     input: z.object({
@@ -1311,6 +1320,15 @@ export default function plugin(bb: BbPluginApi) {
           : "Codex usage unavailable";
       return { status: "unavailable" as const, message };
     },
+    journal_appearance: async () => {
+      const parsed = journalAppearanceSchema.safeParse(await bb.storage.kv.get<unknown>(JOURNAL_APPEARANCE_KEY));
+      return parsed.success ? parsed.data : DEFAULT_JOURNAL_APPEARANCE;
+    },
+    save_journal_appearance: async (appearance) => serializeKvMutation(async () => {
+      await bb.storage.kv.set(JOURNAL_APPEARANCE_KEY, appearance);
+      bb.realtime.publish(JOURNAL_APPEARANCE_CHANNEL, null);
+      return appearance;
+    }),
     workout_scratchpad: async ({ legacyContent }) => serializeKvMutation(async () => {
       const stored = await bb.storage.kv.get<unknown>(WORKOUT_SCRATCHPAD_KEY);
       if (typeof stored === "string" && stored.length <= MAX_WORKOUT_SCRATCHPAD_LENGTH) {
