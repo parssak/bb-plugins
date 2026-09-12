@@ -6,6 +6,7 @@ import { TableKit } from "@tiptap/extension-table";
 import { Markdown } from "@tiptap/markdown";
 import { TextSelection } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
+import { isLikelyMermaid } from "./journal-mermaid.ts";
 
 export type JournalMermaidRenderer = (
   host: HTMLElement,
@@ -52,12 +53,14 @@ const JournalCodeBlock = CodeBlock.extend<JournalCodeBlockOptions>({
         const language = typeof currentNode.attrs.language === "string"
           ? currentNode.attrs.language.toLowerCase()
           : "";
-        code.className = language === "" ? "" : `language-${language}`;
+        const isMermaid = language === "mermaid"
+          || (language === "" && isLikelyMermaid(currentNode.textContent));
+        code.className = isMermaid ? "language-mermaid" : language === "" ? "" : `language-${language}`;
         preview.replaceChildren();
-        preview.hidden = language !== "mermaid";
+        preview.hidden = !isMermaid;
         preview.className = "threadflow-journal-mermaid-preview";
         preview.contentEditable = "false";
-        if (language === "mermaid" && renderMermaid !== null) {
+        if (isMermaid && renderMermaid !== null) {
           disposePreview = renderMermaid(preview, currentNode.textContent) ?? undefined;
         }
       };

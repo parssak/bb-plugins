@@ -101,6 +101,40 @@ test("renders Mermaid code blocks without changing their Markdown", () => {
   }
 });
 
+test("renders an unlabelled code block when its source is clearly Mermaid", () => {
+  const dom = new JSDOM('<div id="editor"></div>');
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    Node: dom.window.Node,
+    HTMLElement: dom.window.HTMLElement,
+    getComputedStyle: dom.window.getComputedStyle,
+  };
+  for (const [key, value] of Object.entries(globals)) {
+    Object.defineProperty(globalThis, key, { value, configurable: true });
+  }
+
+  const markdown = "```\nflowchart TD\n  A --> B\n```";
+  let renderedSource = "";
+  try {
+    const editor = new Editor({
+      element: dom.window.document.querySelector("#editor"),
+      extensions: journalMarkdownExtensions((_host, source) => {
+        renderedSource = source;
+      }),
+      content: markdown,
+      contentType: "markdown",
+    });
+
+    assert.equal(renderedSource, "flowchart TD\n  A --> B");
+    assert.equal(editor.getMarkdown(), markdown);
+    editor.destroy();
+  } finally {
+    dom.window.close();
+    for (const key of Object.keys(globals)) delete (globalThis as Record<string, unknown>)[key];
+  }
+});
+
 test("supports the journal table and indentation shortcuts", () => {
   const dom = new JSDOM('<div id="editor"></div><div id="indent-editor"></div>');
   const globals = {
