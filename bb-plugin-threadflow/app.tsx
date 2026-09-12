@@ -316,13 +316,13 @@ const JOURNAL_EDITOR_CSS = `
   .threadflow-journal-editor .tiptap :is(h4, h5, h6) { margin-top: 1.25em; font-size: 1em; line-height: 1.5; }
 
   .threadflow-journal-editor .tiptap :is(ul, ol) {
-    margin-top: 1em;
+    margin-block: var(--journal-list-spacing, 1em);
     padding-left: 1.5em;
   }
 
   .threadflow-journal-editor .tiptap ul { list-style: disc; }
   .threadflow-journal-editor .tiptap ol { list-style: decimal; }
-  .threadflow-journal-editor .tiptap li { margin-top: 0.35em; padding-left: 0.25em; }
+  .threadflow-journal-editor .tiptap li { margin-block: var(--journal-list-item-spacing, 0.35em); padding-left: 0.25em; }
   .threadflow-journal-editor .tiptap li::marker { color: var(--warning); }
   .threadflow-journal-editor .tiptap li > :is(p, ul, ol) { margin-top: 0.35em; }
 
@@ -340,7 +340,6 @@ const JOURNAL_EDITOR_CSS = `
     display: flex;
     align-items: flex-start;
     gap: 0.6em;
-    margin-top: 0.4em;
     padding-left: 0;
   }
 

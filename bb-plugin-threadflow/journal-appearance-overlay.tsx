@@ -14,6 +14,8 @@ const controls: { key: keyof JournalAppearance; label: string; min: number; max:
   { key: "fontSize", label: "Font size", min: 12, max: 24, step: 0.5, unit: "px" },
   { key: "documentWidth", label: "Document width", min: 480, max: 1200, step: 8, unit: "px" },
   { key: "paragraphSpacing", label: "Paragraph spacing", min: 0, max: 2, step: 0.05, unit: "em" },
+  { key: "listSpacing", label: "List spacing", min: 0, max: 2, step: 0.05, unit: "em" },
+  { key: "listItemSpacing", label: "List item spacing", min: 0, max: 1, step: 0.05, unit: "em" },
 ];
 
 export function JournalAppearanceOverlay() {
@@ -67,6 +69,8 @@ export function JournalAppearanceOverlay() {
       --journal-font-size: ${appearance.fontSize}px;
       --journal-document-width: ${appearance.documentWidth}px;
       --journal-paragraph-spacing: ${appearance.paragraphSpacing}em;
+      --journal-list-spacing: ${appearance.listSpacing}em;
+      --journal-list-item-spacing: ${appearance.listItemSpacing}em;
     }`}</style>
     <Dialog open={open} onOpenChange={(next) => { if (!next) close(); }}>
       <DialogContent className="sm:max-w-sm sm:left-auto sm:right-6 sm:translate-x-0" onEscapeKeyDown={(event) => { if (saving) event.preventDefault(); }} onInteractOutside={(event) => event.preventDefault()}>

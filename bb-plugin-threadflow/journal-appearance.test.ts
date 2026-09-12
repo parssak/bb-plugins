@@ -26,3 +26,13 @@ test("invalid stored journal appearance falls back to defaults", async () => {
     assert.deepEqual(await harness.behavior.callRpc("journal_appearance", {}), DEFAULT_JOURNAL_APPEARANCE);
   } finally { await harness.lifecycle.dispose(); }
 });
+
+test("older stored journal appearance gains list spacing defaults", async () => {
+  const { listSpacing: _listSpacing, listItemSpacing: _listItemSpacing, ...olderAppearance } = DEFAULT_JOURNAL_APPEARANCE;
+  const { bb, harness } = createFakePluginHost({ pluginId: "threadflow" });
+  await bb.storage.kv.set(JOURNAL_APPEARANCE_KEY, olderAppearance);
+  plugin(bb);
+  try {
+    assert.deepEqual(await harness.behavior.callRpc("journal_appearance", {}), DEFAULT_JOURNAL_APPEARANCE);
+  } finally { await harness.lifecycle.dispose(); }
+});
