@@ -484,6 +484,16 @@ const JOURNAL_EDITOR_CSS = `
   }
 
   .threadflow-journal-editor .tiptap pre code { background: none; padding: 0; font-size: inherit; }
+  .threadflow-journal-editor .tiptap .threadflow-journal-mermaid-preview {
+    margin-top: 0.5em;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--background);
+  }
+  .threadflow-journal-editor .tiptap .threadflow-journal-mermaid-preview > :first-child {
+    margin: 0;
+  }
   .threadflow-journal-editor .tiptap strong { font-weight: 600; }
   .threadflow-journal-editor .tiptap a {
     color: inherit;

@@ -1,6 +1,9 @@
 import { useEffect, useRef } from "react";
+import { createRoot } from "react-dom/client";
 import { Editor } from "@tiptap/core";
+import { Markdown } from "@get-bb/plugin-sdk/app";
 import { journalMarkdownExtensions } from "./journal-markdown";
+import { mermaidPreviewMarkdown } from "./journal-mermaid";
 import {
   parseThreadReferenceDrag,
   parseThreadReferenceHref,
@@ -57,7 +60,11 @@ export function JournalMarkdownEditor({
     if (hostRef.current === null) return;
     const editor = new Editor({
       element: hostRef.current,
-      extensions: journalMarkdownExtensions(),
+      extensions: journalMarkdownExtensions((host, source) => {
+        const root = createRoot(host);
+        root.render(<Markdown content={mermaidPreviewMarkdown(source)} />);
+        return () => root.unmount();
+      }),
       content: initialMarkdownRef.current,
       contentType: "markdown",
       autofocus: "end",
