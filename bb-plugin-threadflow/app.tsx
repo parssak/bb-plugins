@@ -296,6 +296,7 @@ const JOURNAL_EDITOR_CSS = `
 
   .threadflow-journal-editor .tiptap > :first-child,
   .threadflow-journal-editor .tiptap li > :first-child,
+  .threadflow-journal-editor .tiptap :is(td, th) > :first-child,
   .threadflow-journal-editor .tiptap blockquote > :first-child {
     margin-top: 0;
   }
@@ -325,6 +326,36 @@ const JOURNAL_EDITOR_CSS = `
   .threadflow-journal-editor .tiptap li { margin-block: var(--journal-list-item-spacing, 0.35em); padding-left: 0.25em; }
   .threadflow-journal-editor .tiptap li::marker { color: var(--warning); }
   .threadflow-journal-editor .tiptap li > :is(p, ul, ol) { margin-top: 0.35em; }
+
+  .threadflow-journal-editor .tiptap table {
+    width: 100%;
+    margin-block: var(--journal-list-spacing, 1em);
+    border-collapse: collapse;
+    table-layout: fixed;
+  }
+
+  .threadflow-journal-editor .tiptap :is(td, th) {
+    position: relative;
+    min-width: 5em;
+    padding: 0.4em 0.55em;
+    border: 1px solid color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+    vertical-align: top;
+  }
+
+  .threadflow-journal-editor .tiptap th {
+    background: color-mix(in oklab, var(--muted) 55%, transparent);
+    font-weight: 600;
+    text-align: left;
+  }
+
+  .threadflow-journal-editor .tiptap :is(td, th) p { margin-block: 0; }
+  .threadflow-journal-editor .tiptap .selectedCell::after {
+    position: absolute;
+    inset: 0;
+    background: color-mix(in oklab, var(--primary) 12%, transparent);
+    content: "";
+    pointer-events: none;
+  }
 
   .threadflow-journal-editor .tiptap ul[data-type="taskList"] {
     list-style: none;

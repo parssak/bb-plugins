@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Editor } from "@tiptap/core";
+import { JSDOM } from "jsdom";
 
 import { journalMarkdownExtensions } from "./journal-markdown.ts";
 import { threadReferenceHref } from "./thread-reference.ts";
@@ -46,4 +47,76 @@ test("round-trips clickable thread references", () => {
   assert.equal(editor.getMarkdown(), markdown);
   assert.equal(editor.getJSON().content?.[0]?.content?.[0]?.marks?.[0]?.type, "link");
   editor.destroy();
+});
+
+test("round-trips editable markdown tables", () => {
+  const markdown = "| Name | Status |\n| --- | --- |\n| Journal | Done |";
+  const editor = new Editor({
+    element: null,
+    extensions: journalMarkdownExtensions(),
+    content: markdown,
+    contentType: "markdown",
+  });
+
+  assert.equal(editor.getJSON().content?.[0]?.type, "table");
+  assert.equal(editor.getJSON().content?.[0]?.content?.[0]?.content?.[0]?.type, "tableHeader");
+  assert.match(editor.getMarkdown(), /\| Name\s+\| Status \|/);
+  assert.match(editor.getMarkdown(), /\| Journal \| Done\s+\|/);
+  editor.destroy();
+});
+
+test("supports the journal table and indentation shortcuts", () => {
+  const dom = new JSDOM('<div id="editor"></div><div id="indent-editor"></div>');
+  const globals = {
+    window: dom.window,
+    document: dom.window.document,
+    Node: dom.window.Node,
+    HTMLElement: dom.window.HTMLElement,
+    getComputedStyle: dom.window.getComputedStyle,
+  };
+  for (const [key, value] of Object.entries(globals)) {
+    Object.defineProperty(globalThis, key, { value, configurable: true });
+  }
+
+  try {
+    const editor = new Editor({
+      element: dom.window.document.querySelector("#editor"),
+      extensions: journalMarkdownExtensions(),
+      content: "|---",
+      contentType: "markdown",
+    });
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    const { from, to } = editor.state.selection;
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      if (!handler(editor.view, from, to, "|")) return false;
+      handled = true;
+      return true;
+    });
+
+    assert.equal(handled, true);
+    assert.equal(editor.getJSON().content?.[0]?.type, "table");
+    assert.equal(editor.getJSON().content?.[0]?.content?.length, 3);
+    editor.destroy();
+
+    const indentEditor = new Editor({
+      element: dom.window.document.querySelector("#indent-editor"),
+      extensions: journalMarkdownExtensions(),
+      content: "Journal",
+      contentType: "markdown",
+    });
+    indentEditor.commands.setTextSelection(indentEditor.state.doc.content.size - 1);
+    const tab = new dom.window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+    indentEditor.view.dom.dispatchEvent(tab);
+    assert.equal(tab.defaultPrevented, true);
+    assert.equal(indentEditor.getMarkdown(), "Journal  ");
+    const shiftTab = new dom.window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+    indentEditor.view.dom.dispatchEvent(shiftTab);
+    assert.equal(shiftTab.defaultPrevented, true);
+    assert.equal(indentEditor.getMarkdown(), "Journal");
+    indentEditor.destroy();
+  } finally {
+    dom.window.close();
+    for (const key of Object.keys(globals)) delete (globalThis as Record<string, unknown>)[key];
+  }
 });
