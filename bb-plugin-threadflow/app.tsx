@@ -55,6 +55,7 @@ import { Input } from "./components/ui/input";
 import { parseThreadTitleBrand, type ThreadTitleBrand } from "./thread-title-brand";
 import { isThreadNudgerMessageText } from "./thread-nudger-message";
 import { formatUserMessageTimestamp, type UserMessageTimestamp } from "./user-message-timestamp";
+import { isCaretAtTextEnd } from "./prompt-autocomplete";
 import { JournalMarkdownEditor } from "./journal-editor";
 import { classifyThreadListState, nestWorkingThreadDependencies, threadIsWorking } from "./thread-list-state";
 import {
@@ -91,7 +92,6 @@ const DISMISS_CHAT_SUMMARY_EVENT = "threadflow:dismiss-chat-summary";
 const SUMMARIES_CHANGED_CHANNEL = "chat-summaries-changed";
 const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 const REVIEW_WORKTREE_PROMPT = "Review the changes in this worktree";
-const ASK_LINUS_PROMPT = "how would linus torvalds feel about this";
 const WAITING_COLLAPSED_STORAGE_KEY = "threadflow:waiting-collapsed:v1";
 type SidebarMode = "threads" | "history";
 let sidebarMode: SidebarMode = "threads";
@@ -1468,10 +1468,6 @@ function useThreadCommand(threadId: string | null) {
       if (!opened) actions.open(result.thread.id);
       return true;
     }
-    if (shiftKey && key === "l") {
-      await rpc.call("send_message", { threadId, message: ASK_LINUS_PROMPT });
-      return true;
-    }
     if (shiftKey && key === "t") {
       const result = await rpc.call("toggle_chat_summary", { threadId });
       if (result.status === "started") toast.success("Generating TLDR…");
@@ -1528,11 +1524,15 @@ function PromptAutocomplete() {
   useEffect(() => {
     if (suggestion === null) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Tab" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
-      if (target === null || target.closest("input, textarea, [contenteditable='true']") === null) return;
+      const editor = target?.closest<HTMLElement>("input, textarea, [contenteditable='true']") ?? null;
+      if (
+        editor === null
+        || event.key !== "Tab" && (event.key !== "ArrowRight" || !isCaretAtTextEnd(editor))
+      ) return;
       const anchorRect = anchorRef.current?.getBoundingClientRect();
-      const targetRect = target.getBoundingClientRect();
+      const targetRect = editor.getBoundingClientRect();
       if (anchorRect === undefined || targetRect.right < anchorRect.left || targetRect.left > anchorRect.right) return;
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -1555,7 +1555,7 @@ function PromptAutocomplete() {
               <span className="text-muted-foreground/80">{typed}</span>{suggestion.slice(typed.length)}
             </span>
           </button>
-          <kbd className="ml-auto shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[9px] text-muted-foreground/50">Tab</kbd>
+          <kbd className="ml-auto shrink-0 rounded border border-border px-1 py-0.5 font-mono text-[9px] text-muted-foreground/50">Tab / →</kbd>
         </div>
       )}
     </div>
@@ -1672,7 +1672,7 @@ function ThreadComposerBridge({ threadId, scopeKind }: {
       if (scopeKind === "side-chat" && (target === null || target === document.body || pane === null)) return;
       if (!event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLocaleLowerCase();
-      if (event.shiftKey && ["e", "l", "a"].includes(key)) {
+      if (event.shiftKey && ["e", "a"].includes(key)) {
         event.preventDefault();
         event.stopImmediatePropagation();
         void runThreadCommand(key, event.shiftKey).catch((cause) => toast.error(cause instanceof Error ? cause.message : String(cause)));
@@ -1839,6 +1839,7 @@ function SidebarThreadRow({
   backgroundCommands,
   pullRequest,
   shortcutNumber,
+  showShortcutNumber,
   selectedThreadId,
   onOpen,
   onOpenSideChat,
@@ -1850,6 +1851,7 @@ function SidebarThreadRow({
   backgroundCommands: number;
   pullRequest: PluginSidebarPullRequest | null;
   shortcutNumber: number;
+  showShortcutNumber: boolean;
   selectedThreadId: string | null;
   onOpen: (thread: NativeThread) => void;
   onOpenSideChat: (sideChat: NativeSideChat) => void;
@@ -1909,7 +1911,9 @@ function SidebarThreadRow({
           }}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
         >
-        <kbd className="shrink-0 font-mono text-[9px] text-muted-foreground">{shortcutNumber}</kbd>
+        {showShortcutNumber && shortcutNumber <= 9 ? (
+          <kbd className="shrink-0 font-mono text-[9px] text-muted-foreground">{shortcutNumber}</kbd>
+        ) : null}
         <BackgroundCommandIndicator count={backgroundCommands} />
         <span
           draggable
@@ -2553,6 +2557,7 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(activeThreadId);
   const [pullRequests, setPullRequests] = useState<Record<string, PluginSidebarPullRequest | null>>({});
   const [error, setError] = useState<string | null>(null);
+  const [showShortcutNumbers, setShowShortcutNumbers] = useState(false);
   const [waitingCollapsed, setWaitingCollapsed] = useState(() => {
     try {
       return window.localStorage.getItem(WAITING_COLLAPSED_STORAGE_KEY) === "true";
@@ -2563,6 +2568,24 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
   const listRef = useRef<HTMLDivElement>(null);
   const keepSidebarFocusRef = useRef(false);
   const runThreadCommand = useThreadCommand(selectedThreadId);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Meta" || event.metaKey) setShowShortcutNumbers(true);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.key === "Meta" || !event.metaKey) setShowShortcutNumbers(false);
+    };
+    const hideShortcutNumbers = () => setShowShortcutNumbers(false);
+    window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keyup", onKeyUp, true);
+    window.addEventListener("blur", hideShortcutNumbers);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keyup", onKeyUp, true);
+      window.removeEventListener("blur", hideShortcutNumbers);
+    };
+  }, []);
 
   const toggleWaitingCollapsed = useCallback(() => {
     setWaitingCollapsed((collapsed) => {
@@ -2680,24 +2703,6 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
       setSelectedThreadId(threadId);
       window.requestAnimationFrame(() => focusSidebarRow(threadId));
     };
-    const navigateSidebar = (direction: -1 | 1) => {
-      const list = listRef.current;
-      if (list === null) return false;
-      const rows = Array.from(list.querySelectorAll<HTMLElement>("[data-threadflow-row]"));
-      if (rows.length === 0) return false;
-      const activeElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      const current = activeElement?.closest<HTMLElement>("[data-threadflow-row]")
-        ?? rows.find((row) => row.dataset.threadId === selectedThreadId)
-        ?? rows[0];
-      const index = Math.max(0, rows.indexOf(current));
-      const next = rows[(index + direction + rows.length) % rows.length];
-      const threadId = next?.dataset.threadId;
-      if (threadId === undefined) return false;
-      next.focus({ preventScroll: true });
-      next.scrollIntoView({ block: "nearest" });
-      openSidebarTarget(threadId, true);
-      return true;
-    };
     const onKeyDown = (event: KeyboardEvent) => {
       const commandKey = event.key.toLocaleLowerCase();
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -2722,7 +2727,7 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
         && !event.ctrlKey
         && !event.altKey
         && event.shiftKey
-        && ["e", "l", "a"].includes(commandKey)
+        && ["e", "a"].includes(commandKey)
         && listRef.current?.contains(document.activeElement)
       ) {
         event.preventDefault();
@@ -2772,14 +2777,6 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
         ?? rows.find((row) => row.dataset.threadId === selectedThreadId)
         ?? rows[0];
 
-      if (["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"].includes(event.key)) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const direction = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -1 : 1;
-        navigateSidebar(direction);
-        return;
-      }
-
       if (event.key === "Enter") {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -2818,6 +2815,7 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
       backgroundCommands={nativeThreadById.get(thread.id)?.activity.backgroundCommands ?? 0}
       pullRequest={pullRequests[thread.id] ?? null}
       shortcutNumber={flatThreads.indexOf(thread) + 1}
+      showShortcutNumber={showShortcutNumbers}
       selectedThreadId={selectedThreadId}
       onOpen={(candidate) => openThread(candidate.id)}
       onOpenSideChat={(sideChat) => openSideChat(sideChat)}
@@ -2986,24 +2984,6 @@ export default definePluginApp((app) => {
     },
   });
   app.contentScripts.register({ id: "sidebar-peek", mount: mountSidebarPeek });
-  app.contentScripts.register({
-    id: "compact-sidebar-shortcut",
-    mount({ signal }) {
-      const onKeyDown = (event: KeyboardEvent) => {
-        if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey
-          || event.repeat || event.key.toLowerCase() !== "b") return;
-        // The host command changes desktop state even while its compact drawer
-        // is mounted. The native button already dispatches to the correct state.
-        if (!document.querySelector('[data-sidebar="panel"][data-vaul-drawer-direction]')) return;
-        const trigger = document.querySelector<HTMLButtonElement>('[data-sidebar="trigger"]');
-        if (!trigger) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        trigger.click();
-      };
-      window.addEventListener("keydown", onKeyDown, { capture: true, signal });
-    },
-  });
   app.contentScripts.register({
     id: "thread-history-shortcuts",
     mount({ signal }) {

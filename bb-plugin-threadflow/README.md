@@ -3,7 +3,7 @@
 A compact replacement for BB's native thread list. It groups source threads into
 Needs you, Waiting, In review, and Working; nests hidden side chats under their source;
 shows pull requests, CI, and worktree diffs; and supports dialog-based rename,
-safe archive, drag-to-split, numbered shortcuts, and arrow-key navigation.
+safe archive, drag-to-split, and Command-number shortcuts.
 Waiting follows BB's queued-work state, so scheduled sends and plugin-held waits
 share one section regardless of what condition will release them.
 Working threads declared by `threads_idle` or a custom instruction's `threadIds`
@@ -35,11 +35,10 @@ Keyboard commands:
 - Command-1 through Command-9 open numbered visible threads.
 - Command-E is left to BB's native terminal handling.
 - Command-Shift-E opens a review side chat.
-- Command-Shift-L asks what Linus Torvalds would think.
 - Command-Shift-T toggles an existing TLDR or generates one when none exists.
 - Command-Shift-M merges an eligible pull request.
 - Command-Shift-A archives or unarchives the current thread.
-- Escape closes an open TLDR before returning to the thread list; arrow keys navigate the list, and typing returns to the chat composer.
+- Escape closes an open TLDR before returning to the thread list, and typing returns to the chat composer.
 
 Archiving a managed-worktree source archives its environment's threads so BB can
 clean up the worktree, and is refused while the source or a child chat is running.
