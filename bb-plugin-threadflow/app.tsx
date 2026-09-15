@@ -93,9 +93,24 @@ const SUMMARIES_CHANGED_CHANNEL = "chat-summaries-changed";
 const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 const REVIEW_WORKTREE_PROMPT = "Review the changes in this worktree";
 const WAITING_COLLAPSED_STORAGE_KEY = "threadflow:waiting-collapsed:v1";
+const SIDEBAR_LABEL_CASE_STORAGE_KEY = "threadflow:sidebar-label-case:v1";
+type SidebarLabelCase = "lower" | "capital" | "upper";
 type SidebarMode = "threads" | "history";
 let sidebarMode: SidebarMode = "threads";
 const sidebarModeListeners = new Set<() => void>();
+
+function formatSidebarLabel(label: string, labelCase: SidebarLabelCase): string {
+  const lower = label.toLowerCase();
+  if (labelCase === "upper") return lower.toUpperCase();
+  if (labelCase === "capital") return lower.replace(/^./, (character) => character.toUpperCase());
+  return lower;
+}
+
+function nextSidebarLabelCase(labelCase: SidebarLabelCase): SidebarLabelCase {
+  if (labelCase === "lower") return "capital";
+  if (labelCase === "capital") return "upper";
+  return "lower";
+}
 
 function setSidebarMode(mode: SidebarMode) {
   if (sidebarMode === mode) return;
@@ -2565,6 +2580,14 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
       return false;
     }
   });
+  const [sidebarLabelCase, setSidebarLabelCase] = useState<SidebarLabelCase>(() => {
+    try {
+      const stored = window.localStorage.getItem(SIDEBAR_LABEL_CASE_STORAGE_KEY);
+      return stored === "capital" || stored === "upper" ? stored : "lower";
+    } catch {
+      return "lower";
+    }
+  });
   const listRef = useRef<HTMLDivElement>(null);
   const keepSidebarFocusRef = useRef(false);
   const runThreadCommand = useThreadCommand(selectedThreadId);
@@ -2592,6 +2615,18 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
       const next = !collapsed;
       try {
         window.localStorage.setItem(WAITING_COLLAPSED_STORAGE_KEY, String(next));
+      } catch {
+        // The in-memory state still works when browser storage is unavailable.
+      }
+      return next;
+    });
+  }, []);
+
+  const cycleSidebarLabelCase = useCallback(() => {
+    setSidebarLabelCase((current) => {
+      const next = nextSidebarLabelCase(current);
+      try {
+        window.localStorage.setItem(SIDEBAR_LABEL_CASE_STORAGE_KEY, next);
       } catch {
         // The in-memory state still works when browser storage is unavailable.
       }
@@ -2836,29 +2871,32 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
         <div className="space-y-3">
           {groups.map(([title, groupThreads]) => groupThreads.length === 0 ? null : (
             <section key={title} className={title === "Working" || title === "Waiting" ? "opacity-50" : undefined}>
-              {title === "Waiting" ? (
+              <div className="flex w-full items-center justify-between px-2 pb-1 text-[10px] font-normal tracking-wide text-muted-foreground">
                 <button
                   type="button"
-                  className="flex w-full items-center justify-between rounded-sm px-2 pb-1 text-[10px] font-normal uppercase tracking-wide text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
-                  aria-expanded={!waitingCollapsed}
-                  onClick={toggleWaitingCollapsed}
+                  title="Cycle label capitalization"
+                  className="rounded-sm outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+                  onClick={cycleSidebarLabelCase}
                 >
-                  <span className="flex items-center gap-1">
-                    <span>{title}</span>
+                  {formatSidebarLabel(title, sidebarLabelCase)}
+                </button>
+                {title === "Waiting" ? (
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+                    aria-label={waitingCollapsed ? "Expand waiting section" : "Collapse waiting section"}
+                    aria-expanded={!waitingCollapsed}
+                    onClick={toggleWaitingCollapsed}
+                  >
+                    {waitingCollapsed ? <span>{groupThreads.length}</span> : null}
                     <HugeiconsIcon
                       icon={ArrowRight01Icon}
                       className={`size-3 transition-transform ${waitingCollapsed ? "" : "rotate-90"}`}
                       aria-hidden
                     />
-                  </span>
-                  <span>{groupThreads.length}</span>
-                </button>
-              ) : (
-                <div className="flex items-center justify-between px-2 pb-1 text-[10px] font-normal uppercase tracking-wide text-muted-foreground">
-                  <span>{title}</span>
-                  <span>{groupThreads.length}</span>
-                </div>
-              )}
+                  </button>
+                ) : null}
+              </div>
               {title === "Waiting" && waitingCollapsed ? null : <div className="space-y-0.5">
                 {groupThreads.map((thread) => {
                   const dependencies = dependenciesByParentId.get(thread.id) ?? [];

@@ -69,6 +69,56 @@ test("sidebar leaves unrelated controls and dialogs in charge of keyboard input"
   slot.lifecycle.unmount();
 });
 
+test("sidebar labels cycle casing and only show a count when waiting is collapsed", async () => {
+  window.localStorage.clear();
+  const app = await loadPluginApp(() => import("./app"));
+  const baseThread = {
+    projectId: "personal",
+    project: "Personal",
+    provider: "codex",
+    createdAt: 1,
+    updatedAt: 1,
+    archivedAt: null,
+    archived: false,
+    needsAttention: false,
+    scheduledSendAt: null,
+    waitingForThreadIds: [],
+    sideChats: [],
+  };
+  const slot = renderSlot(app.threadLists[0]!, {
+    activeThreadId: null, activeProjectId: null, isCompactViewport: false,
+    onNavigate: () => {}, searchQuery: "", Original: () => null,
+  }, { rpc: {
+    threads: () => ({ threads: [
+      { ...baseThread, id: "thread-needs-you", title: "Ready", needsAttention: true, queuedWork: "none", status: "idle" },
+      { ...baseThread, id: "thread-working", title: "Running", queuedWork: "none", status: "active" },
+      { ...baseThread, id: "thread-waiting", title: "Paused", queuedWork: "waiting", status: "idle" },
+    ], generatedAt: 1 }),
+    codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
+  } });
+
+  const needsYou = await waitFor(() => slot.getByRole("button", { name: "needs you" }));
+  expect(needsYou.parentElement?.textContent).toBe("needs you");
+  expect(slot.getByRole("button", { name: "working" }).parentElement?.textContent).toBe("working");
+  const collapse = slot.getByRole("button", { name: "Collapse waiting section" });
+  expect(collapse.parentElement?.textContent).toBe("waiting");
+
+  fireEvent.click(needsYou);
+  expect(slot.getByRole("button", { name: "Needs you" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Waiting" })).toBeTruthy();
+  fireEvent.click(slot.getByRole("button", { name: "Needs you" }));
+  expect(slot.getByRole("button", { name: "NEEDS YOU" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "WAITING" })).toBeTruthy();
+
+  fireEvent.click(collapse);
+  const expand = slot.getByRole("button", { name: "Expand waiting section" });
+  expect(expand.parentElement?.textContent).toBe("WAITING1");
+  expect(slot.queryByRole("link", { name: "Paused" })).toBeNull();
+  expect(window.localStorage.getItem("threadflow:sidebar-label-case:v1")).toBe("upper");
+  slot.lifecycle.unmount();
+  window.localStorage.clear();
+});
+
 test("visible child rows use BB's native split-thread navigation", async () => {
   const app = await loadPluginApp(() => import("./app"));
   const child = {
