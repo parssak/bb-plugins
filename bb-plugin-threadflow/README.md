@@ -1,10 +1,10 @@
 # Threadflow
 
 A compact replacement for BB's native thread list. It groups source threads into
-Needs you, Waiting, In review, and Working; nests hidden side chats under their source;
+Needs you, Snoozed, In review, and Working; nests hidden side chats under their source;
 shows pull requests, CI, and worktree diffs; and supports dialog-based rename,
 safe archive, drag-to-split, and Command-number shortcuts.
-Waiting follows BB's queued-work state, so scheduled sends and plugin-held waits
+Snoozed follows BB's queued-work state, so scheduled sends and plugin-held waits
 share one section regardless of what condition will release them.
 Working threads declared by `threads_idle` or a custom instruction's `threadIds`
 nest beneath the waiting thread instead of appearing separately.

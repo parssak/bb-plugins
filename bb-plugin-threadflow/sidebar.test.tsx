@@ -69,7 +69,7 @@ test("sidebar leaves unrelated controls and dialogs in charge of keyboard input"
   slot.lifecycle.unmount();
 });
 
-test("sidebar labels cycle casing and only show a count when waiting is collapsed", async () => {
+test("sidebar labels cycle casing and only show a count when snoozed is collapsed", async () => {
   window.localStorage.clear();
   const app = await loadPluginApp(() => import("./app"));
   const baseThread = {
@@ -100,19 +100,19 @@ test("sidebar labels cycle casing and only show a count when waiting is collapse
   const needsYou = await waitFor(() => slot.getByRole("button", { name: "needs you" }));
   expect(needsYou.parentElement?.textContent).toBe("needs you");
   expect(slot.getByRole("button", { name: "working" }).parentElement?.textContent).toBe("working");
-  const collapse = slot.getByRole("button", { name: "Collapse waiting section" });
-  expect(collapse.parentElement?.textContent).toBe("waiting");
+  const collapse = slot.getByRole("button", { name: "Collapse snoozed section" });
+  expect(collapse.parentElement?.textContent).toBe("snoozed");
 
   fireEvent.click(needsYou);
   expect(slot.getByRole("button", { name: "Needs you" })).toBeTruthy();
-  expect(slot.getByRole("button", { name: "Waiting" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "Snoozed" })).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Needs you" }));
   expect(slot.getByRole("button", { name: "NEEDS YOU" })).toBeTruthy();
-  expect(slot.getByRole("button", { name: "WAITING" })).toBeTruthy();
+  expect(slot.getByRole("button", { name: "SNOOZED" })).toBeTruthy();
 
   fireEvent.click(collapse);
-  const expand = slot.getByRole("button", { name: "Expand waiting section" });
-  expect(expand.parentElement?.textContent).toBe("WAITING1");
+  const expand = slot.getByRole("button", { name: "Expand snoozed section" });
+  expect(expand.parentElement?.textContent).toBe("SNOOZED1");
   expect(slot.queryByRole("link", { name: "Paused" })).toBeNull();
   expect(window.localStorage.getItem("threadflow:sidebar-label-case:v1")).toBe("upper");
   slot.lifecycle.unmount();

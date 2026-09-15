@@ -100,7 +100,7 @@ let sidebarMode: SidebarMode = "threads";
 const sidebarModeListeners = new Set<() => void>();
 
 function formatSidebarLabel(label: string, labelCase: SidebarLabelCase): string {
-  const lower = label.toLowerCase();
+  const lower = (label === "Waiting" ? "Snoozed" : label).toLowerCase();
   if (labelCase === "upper") return lower.toUpperCase();
   if (labelCase === "capital") return lower.replace(/^./, (character) => character.toUpperCase());
   return lower;
@@ -2871,7 +2871,7 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
         <div className="space-y-3">
           {groups.map(([title, groupThreads]) => groupThreads.length === 0 ? null : (
             <section key={title} className={title === "Working" || title === "Waiting" ? "opacity-50" : undefined}>
-              <div className="flex w-full items-center justify-between px-2 pb-1 text-[10px] font-normal tracking-wide text-muted-foreground">
+              <div className="flex w-full items-center justify-between px-2 pb-1 text-[10px] font-normal tracking-normal text-muted-foreground">
                 <button
                   type="button"
                   title="Cycle label capitalization"
@@ -2884,7 +2884,7 @@ function ActiveThreadList({ activeThreadId, onNavigate }: PluginThreadListProps)
                   <button
                     type="button"
                     className="flex items-center gap-1 rounded-sm outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
-                    aria-label={waitingCollapsed ? "Expand waiting section" : "Collapse waiting section"}
+                    aria-label={waitingCollapsed ? "Expand snoozed section" : "Collapse snoozed section"}
                     aria-expanded={!waitingCollapsed}
                     onClick={toggleWaitingCollapsed}
                   >
