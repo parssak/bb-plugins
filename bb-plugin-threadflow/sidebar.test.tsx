@@ -7,22 +7,26 @@ afterEach(cleanup);
 
 test("compact navigation omits host destinations without a private DOM portal target", async () => {
   const app = await loadPluginApp(() => import("./app"));
-  const activations: string[] = [];
   const items = [
     { id: "new", label: "New thread", action: { kind: "new-thread" }, icon: { kind: "host", name: "new-thread" } },
     { id: "search", label: "Search threads", action: { kind: "search-threads" }, icon: { kind: "host", name: "search" } },
     { id: "journal", label: "Journal", action: { kind: "open-plugin-panel", pluginId: "threadflow", panelId: "journal" }, icon: { kind: "plugin", pluginId: "threadflow", icon: null } },
-  ].map((item) => ({ ...item, isDisabled: false, shortcut: null, experimental_splitProps: {} }));
+  ].map((item) => ({ ...item, isDisabled: false, isVisible: true, isLoading: false, pluginId: null, shortcut: null, experimental_Accessory: null }));
   const slot = renderSlot(app.experimentalSidebarNavigations[0]!, {
-    items, activeItemId: null, isCompactViewport: false,
-    experimental_activate: (id: string) => activations.push(id),
+    isCompactViewport: false,
     experimental_Original: () => <div>Native navigation</div>,
-  }, { rpc: { threads: () => ({ threads: [], generatedAt: 1 }) } });
+  }, {
+    sidebarNavigation: { items, activeItemId: null },
+    rpc: { threads: () => ({ threads: [], generatedAt: 1 }) },
+  });
   fireEvent.click(slot.getByRole("button", { name: "New thread" }));
   expect(slot.queryByRole("button", { name: "Search threads" })).toBeNull();
   expect(slot.getByRole("button", { name: "Show archived threads" })).toBeTruthy();
   fireEvent.click(slot.getByRole("button", { name: "Open Journal" }));
-  expect(activations).toEqual(["new", "journal"]);
+  expect(slot.inspection.sidebarNavigationCalls).toEqual([
+    { method: "activate", itemId: "new", openInSplit: false },
+    { method: "activate", itemId: "journal", openInSplit: false },
+  ]);
   slot.lifecycle.unmount();
 });
 

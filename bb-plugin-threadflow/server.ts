@@ -64,6 +64,7 @@ const queuedThreadWaitSchema = z.object({
     "time",
     "thread-busy",
     "turn-starting",
+    "stopping",
     "provisioning",
     "host-offline",
     "interaction",
@@ -377,6 +378,8 @@ function queuedWaitReason(entry: QueuedMessage): QueuedThreadWait["reason"] {
       return "The current turn must finish before this continuation can be sent.";
     case "turn-starting":
       return "The current turn must start before this continuation can be sent.";
+    case "stopping":
+      return "The current turn must stop before this continuation can be sent.";
     case "provisioning":
       return "The workspace must finish provisioning before this continuation can be sent.";
     case "host-offline":

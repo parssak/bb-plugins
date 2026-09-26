@@ -17,6 +17,8 @@ import {
   UrlLink,
   definePluginApp,
   experimental_useAppPanel,
+  experimental_useSidebarNavigation,
+  experimental_useSidebarNavigationSplit,
   experimental_useSidebarThreads,
   experimental_useSidebarThreadActions,
   experimental_useSidebarThreadPullRequest,
@@ -29,6 +31,7 @@ import {
   useRpc,
 } from "@get-bb/plugin-sdk/app";
 import type {
+  ExperimentalSidebarNavigationItem,
   ExperimentalSidebarNavigationProps,
   PluginNavPanelProps,
   PluginSidebarPullRequest,
@@ -1206,6 +1209,8 @@ function queuedWaitTitle(wait: QueuedThreadWait): string {
       return "Waiting for the current turn";
     case "turn-starting":
       return "Waiting for the turn to start";
+    case "stopping":
+      return "Waiting for the current turn to stop";
     case "provisioning":
       return "Waiting for the workspace";
     case "interaction":
@@ -2069,13 +2074,60 @@ function SidebarThreadRow({
   );
 }
 
+function JournalNavigationButton({ item, label, highlighted, buttonClass, onOpen }: {
+  item: ExperimentalSidebarNavigationItem;
+  label: string;
+  highlighted: boolean;
+  buttonClass: string;
+  onOpen: () => void;
+}) {
+  const { splitProps } = experimental_useSidebarNavigationSplit(item.id);
+  return (
+    <button
+      type="button"
+      {...splitProps}
+      disabled={item.isDisabled || item.isLoading}
+      aria-label={label}
+      title={`${label} (⌘⇧J)`}
+      aria-current={highlighted ? "page" : undefined}
+      onClick={onOpen}
+      className={highlighted
+        ? `${buttonClass} bg-blue-500/10 text-blue-500 hover:bg-blue-500/15 focus-visible:ring-blue-500/50`
+        : buttonClass}
+    >
+      <HugeiconsIcon icon={File01Icon} className="size-4" aria-hidden />
+    </button>
+  );
+}
+
+function NewThreadNavigationButton({ item, buttonClass, onOpen }: {
+  item: ExperimentalSidebarNavigationItem;
+  buttonClass: string;
+  onOpen: () => void;
+}) {
+  const { splitProps } = experimental_useSidebarNavigationSplit(item.id);
+  return (
+    <button
+      type="button"
+      {...splitProps}
+      disabled={item.isDisabled || item.isLoading}
+      aria-label={item.label}
+      aria-keyshortcuts={item.shortcut?.ariaKeyShortcuts}
+      title={item.label}
+      onClick={onOpen}
+      className={`${buttonClass} ml-auto`}
+    >
+      <HugeiconsIcon icon={Add01Icon} className="size-4" aria-hidden />
+    </button>
+  );
+}
+
 function JournalSidebarNavigation({
-  items,
-  activeItemId,
   isCompactViewport,
-  experimental_activate: activate,
   experimental_Original: Original,
 }: ExperimentalSidebarNavigationProps) {
+  const { items, activeItemId, actions } = experimental_useSidebarNavigation();
+  const { activate } = actions;
   const mode = useSidebarMode();
   const { threads } = useThreadflowThreads("recent");
   const newThreadItem = items.find((item) => item.action.kind === "new-thread");
@@ -2123,35 +2175,22 @@ function JournalSidebarNavigation({
       >
         <HugeiconsIcon icon={HistoryIcon} className="size-4" aria-hidden />
       </button>
-      <button
-        type="button"
-        {...journalItem.experimental_splitProps}
-        aria-label={label}
-        title={`${label} (⌘⇧J)`}
-        aria-current={isActive ? "page" : undefined}
-        onClick={() => {
+      <JournalNavigationButton
+        item={journalItem}
+        label={label}
+        highlighted={highlight}
+        buttonClass={buttonClass}
+        onOpen={() => {
           setSidebarMode("threads");
           activate(journalItem.id, { openInSplit: false });
         }}
-        className={highlight
-          ? `${buttonClass} bg-blue-500/10 text-blue-500 hover:bg-blue-500/15 focus-visible:ring-blue-500/50`
-          : buttonClass}
-      >
-        <HugeiconsIcon icon={File01Icon} className="size-4" aria-hidden />
-      </button>
+      />
       {newThreadItem === undefined ? null : (
-        <button
-          type="button"
-          {...newThreadItem.experimental_splitProps}
-          disabled={newThreadItem.isDisabled}
-          aria-label={newThreadItem.label}
-          aria-keyshortcuts={newThreadItem.shortcut?.ariaKeyShortcuts}
-          title={newThreadItem.label}
-          onClick={() => activate(newThreadItem.id, { openInSplit: false })}
-          className={`${buttonClass} ml-auto`}
-        >
-          <HugeiconsIcon icon={Add01Icon} className="size-4" aria-hidden />
-        </button>
+        <NewThreadNavigationButton
+          item={newThreadItem}
+          buttonClass={buttonClass}
+          onOpen={() => activate(newThreadItem.id, { openInSplit: false })}
+        />
       )}
     </div>
   );
