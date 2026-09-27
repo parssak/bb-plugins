@@ -726,57 +726,6 @@ const NATIVE_COMPOSER_CSS = `
     padding-top: 1rem !important;
   }
 
-  [data-follow-up-composer-footer] {
-    position: relative !important;
-    height: 0 !important;
-    min-height: 0 !important;
-    max-height: 0 !important;
-    margin-top: 0 !important;
-    padding: 0 !important;
-    overflow: visible !important;
-  }
-
-  [data-follow-up-composer-footer] > :first-child {
-    display: none !important;
-  }
-
-  [data-follow-up-composer-footer] > :last-child {
-    position: absolute !important;
-    right: 3rem !important;
-    bottom: 0.625rem !important;
-    z-index: 4 !important;
-    gap: 0.375rem !important;
-  }
-
-  [data-follow-up-composer-footer] button[aria-label="Permission mode"] {
-    display: inline-grid !important;
-    width: 1.75rem !important;
-    min-width: 1.75rem !important;
-    height: 1.75rem !important;
-    place-items: center !important;
-    align-content: center !important;
-    justify-content: center !important;
-    padding: 0 !important;
-  }
-
-  [data-follow-up-composer-footer] button[aria-label="Permission mode"] > * {
-    display: none !important;
-  }
-
-  [data-follow-up-composer-footer] button[aria-label="Permission mode"]::before {
-    display: grid;
-    width: 1.125rem;
-    height: 1.125rem;
-    place-items: center;
-    border: 1.5px solid currentColor;
-    border-radius: 9999px;
-    content: "✓";
-    font-size: 0.6875rem;
-    font-weight: 700;
-    line-height: 1;
-    margin-inline: auto;
-  }
-
   [data-promptbox-standard-actions] button[aria-label="Start voice input"] {
     display: none !important;
   }
