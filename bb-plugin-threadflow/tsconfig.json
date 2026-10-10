@@ -6,26 +6,13 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
-    "lib": [
-      "ES2022",
-      "DOM",
-      "DOM.Iterable"
-    ],
-    "types": [
-      "node"
-    ],
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"]
     },
     "noEmit": true,
     "skipLibCheck": false
   },
-  "include": [
-    "server.ts",
-    "wait-service.ts",
-    "github-workflow-run.ts",
-    "app.tsx"
-  ]
+  "include": ["server.ts", "app.tsx"]
 }

@@ -1,0 +1,13 @@
+# Journal
+
+Journal provides a dedicated rail page for daily Markdown notes, task lists, tables, thread references, and Mermaid diagrams. Each date has a persistent chat in BB’s right panel. Notes and appearance are saved in Journal’s own storage. Existing Threadflow notes and daily chat links can be imported once; Journal then works with Threadflow disabled.
+
+```sh
+npm ci
+npm run check
+npm test
+bb plugin build .
+bb plugin install .
+```
+
+See the repository README for the one-time storage import.

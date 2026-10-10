@@ -1,69 +1,112 @@
-import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import type { NativeThread, rpcContract } from "../server";
-
-type Scope = "recent" | "all";
-type Snapshot = { threads: NativeThread[]; error: string | null };
-
-function createStore() {
-  let snapshot: Snapshot = { threads: [], error: null };
-  let pending: Promise<void> | null = null;
-  let refreshQueued = false;
-  let timer: ReturnType<typeof setInterval> | undefined;
-  let consumers = 0;
-  const listeners = new Set<() => void>();
-  const publish = (next: Snapshot) => {
-    snapshot = next;
-    for (const listener of listeners) listener();
-  };
-  return {
-    getSnapshot: () => snapshot,
-    subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => { listeners.delete(listener); };
-    },
-    refresh(load: () => Promise<{ threads: NativeThread[] }>) {
-      if (pending !== null) {
-        refreshQueued = true;
-        return pending;
-      }
-      pending = (async () => {
-        do {
-          refreshQueued = false;
-          try {
-            const { threads } = await load();
-            publish({ threads, error: null });
-          } catch (cause) {
-            publish({ ...snapshot, error: cause instanceof Error ? cause.message : String(cause) });
-          }
-        } while (refreshQueued);
-      })().finally(() => { pending = null; });
-      return pending;
-    },
-    retain(refresh: () => Promise<void>) {
-      if (consumers++ === 0) {
-        void refresh();
-        timer = setInterval(() => void refresh(), 30_000);
-      }
-      return () => {
-        if (--consumers === 0) clearInterval(timer);
-      };
-    },
-  };
-}
-
-// Navigation and list slots share one snapshot and one polling lifecycle.
-const stores = { recent: createStore(), all: createStore() };
-
-export function useThreadflowThreads(scope: Scope) {
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  experimental_useSidebarThreads,
+  experimental_useProviders,
+  useRealtime,
+  useRealtimeConnectionState,
+  useRpc,
+} from "@get-bb/plugin-sdk/app";
+import type { NativeThread, rpcContract } from "../contract";
+export function useThreadflowThreads(scope: "recent" | "all") {
+  const native = experimental_useSidebarThreads({
+    experimental_lifecycles: scope === "all" ? ["archived"] : ["active"],
+  });
+  const { providers } = experimental_useProviders();
   const rpc = useRpc<typeof rpcContract>();
-  const store = stores[scope];
-  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  const refresh = useCallback(
-    () => store.refresh(() => rpc.call("threads", { scope, query: "" })),
-    [rpc, scope, store],
+  const connection = useRealtimeConnectionState();
+  const [dependencies, setDependencies] = useState<Record<string, string[]>>(
+    {},
   );
-  useEffect(() => store.retain(refresh), [refresh, store]);
-  useRealtime("threads-changed", () => { void refresh(); });
-  return { ...snapshot, refresh };
+  const [scheduledSends, setScheduledSends] = useState<Record<string, number>>(
+    {},
+  );
+  const refresh = useCallback(async () => {
+    try {
+      const result = await rpc.call("wait_dependencies", {});
+      setScheduledSends(
+        Object.fromEntries(
+          [...result.scheduledSends]
+            .sort((a, b) => b.sendAt - a.sendAt)
+            .map((s) => [s.threadId, s.sendAt]),
+        ),
+      );
+      setDependencies(
+        Object.fromEntries(
+          result.dependencies.map((d) => [
+            d.waitingThreadId,
+            d.targetThreadIds,
+          ]),
+        ),
+      );
+    } catch {
+      /* Preserve the last dependency snapshot while reconnecting. */
+    }
+  }, [rpc]);
+  useEffect(() => {
+    if (scope === "recent") void refresh();
+  }, [refresh, scope, connection]);
+  useRealtime("threads-changed", () => {
+    if (scope === "recent") void refresh();
+  });
+  const threads = useMemo<NativeThread[]>(() => {
+    const projects = new Map(native.projects.map((p) => [p.id, p.name]));
+    const providerNames = new Map(providers.map((p) => [p.id, p.displayName]));
+    const children = new Map<string, NativeThread["sideChats"]>();
+    for (const thread of native.threads) {
+      if (!thread.parentThreadId || thread.isArchived) continue;
+      const list = children.get(thread.parentThreadId) ?? [];
+      const owned =
+        thread.isHidden &&
+        thread.originKind === "fork" &&
+        ["threadflow", "chat-tools"].includes(thread.originPluginId ?? "");
+      list.push({
+        id: thread.id,
+        title: thread.displayTitle || thread.title || "Side chat",
+        sourceThreadId: thread.parentThreadId,
+        createdAt: thread.createdAt,
+        needsAttention: thread.hasPendingInteraction,
+        running: !["idle", "error"].includes(thread.runtimeStatus),
+        closeable: owned,
+        navigation: owned ? "thread" : "split",
+      });
+      children.set(thread.parentThreadId, list);
+    }
+    return native.threads
+      .filter((t) => !t.parentThreadId && !t.isHidden)
+      .map((t) => ({
+        id: t.id,
+        title: t.displayTitle || t.title || "Untitled",
+        projectId: t.projectId,
+        project: projects.get(t.projectId) ?? "Personal",
+        provider: providerNames.get(t.providerId) ?? t.providerId,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+        archivedAt: t.archivedAt,
+        archived: t.isArchived,
+        needsAttention: t.hasPendingInteraction,
+        queuedWork: t.queuedWork,
+        scheduledSendAt:
+          t.status === "idle" &&
+          !t.hasPendingInteraction &&
+          t.queuedWork === "waiting"
+            ? (scheduledSends[t.id] ?? null)
+            : null,
+        waitingForThreadIds: dependencies[t.id] ?? [],
+        status: t.runtimeStatus,
+        sideChats:
+          children.get(t.id)?.sort((a, b) => a.createdAt - b.createdAt) ?? [],
+      }));
+  }, [
+    native.threads,
+    native.projects,
+    providers,
+    dependencies,
+    scheduledSends,
+  ]);
+  return {
+    threads,
+    error: native.status === "error" ? "Couldn’t load threads" : null,
+    refresh,
+    archive: native.experimental_archived,
+  };
 }

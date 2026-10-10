@@ -1,49 +1,19 @@
 # Threadflow
 
-A compact replacement for BB's native thread list. It groups source threads into
-Needs you, Snoozed, In review, and Working; nests hidden side chats under their source;
-shows pull requests, CI, and worktree diffs; and supports dialog-based rename,
-safe archive, drag-to-split, and Command-number shortcuts.
-Snoozed follows BB's queued-work state, so scheduled sends and plugin-held waits
-share one section regardless of what condition will release them.
-Working threads declared by `threads_idle` or a custom instruction's `threadIds`
-nest beneath the waiting thread instead of appearing separately.
-Leading `[bb]` and `[bogi]` title tags render as their matching brand marks.
-Each Journal date has a persistent hidden chat in the page's right panel, seeded
-with that date's Markdown and instructions for resolving linked BB threads.
-The usage footer tracks local-time samples and highlights the portion of the
-weekly Codex allowance consumed since the user's midnight when history exists.
+A compact thread list for BB: Needs you, Snoozed, In review, and Working; nested child threads and wait dependencies; PR badges; archive history; drag to split; and keyboard focus controls.
 
-Native BB chats gain stable thread accents and side-chat panels,
-one-click side-chat handoffs, auto-merge controls, and Luna-generated summaries
-for unread replies of at least 400 characters. Handoffs ask the side chat for a
-terse fenced summary and relay only that summary to its source thread. Summaries
-keep the native composer usable and offer up to three terse follow-up actions.
-Native steer labels and action buttons below user messages are hidden.
-User bubbles use compact borderless padding and the Bogi tail only on the last
-message in each consecutive user-message run.
-Thread Nudger check-ins stay in the agent's working context but are omitted from
-completed chat history, prompt suggestions, and the user message shown in TLDR.
-When running work settles to zero and an unread thread still needs attention,
-Threadflow plays one configurable macOS completion alert instead of repeating it
-for every finished thread.
-When a new pull request appears, its review side chat starts automatically in the
-background.
+Threadflow reads BB's live thread cache and host navigation APIs. It owns durable waits, the completion alert, and the focus scratchpad. Its backend returns only wait and scheduled-send metadata for the list. Archived threads use BB's paginated archive cache.
 
-Keyboard commands:
+Journal, Chat tools, and Usage insights are independent sibling packages. Journal has its own rail entry. Review and TLDR shortcuts invoke Chat tools through BB's public RPC API; the thread list and waits work without it.
 
-- Command-1 through Command-9 open numbered visible threads.
-- Command-E is left to BB's native terminal handling.
-- Command-Shift-E opens a review side chat.
-- Command-Shift-T toggles an existing TLDR or generates one when none exists.
-- Command-Shift-M merges an eligible pull request.
-- Command-Shift-A archives or unarchives the current thread.
-- Escape closes an open TLDR before returning to the thread list, and typing returns to the chat composer.
-
-Archiving a managed-worktree source archives its environment's threads so BB can
-clean up the worktree, and is refused while the source or a child chat is running.
+Shortcuts: Command-number opens visible threads; Command-Shift-A toggles archive; Command-Shift-E opens a review through Chat tools; Command-Shift-T toggles TLDR through Chat tools. BB owns the rail, compose navigation, panels, and terminal handling.
 
 ```sh
-bb plugin build
-bb plugin install .
+npm ci
+npm run check
+npm test
+bb plugin build .
+bb plugin reload threadflow
 ```
+
+See the repository README for data migration from the combined plugin.

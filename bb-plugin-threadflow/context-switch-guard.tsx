@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import { usePortalScopeProps } from "./lib/portal-scope";
-import type { rpcContract } from "./server";
+import type { rpcContract } from "./contract";
 
 const SWITCH_WINDOW_MS = 2 * 60_000;
 const SWITCH_THRESHOLD = 16;
@@ -20,14 +20,22 @@ type ThreadSwitch = {
   at: number;
 };
 
-export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string | null }) {
+export function ContextSwitchGuard({
+  activeThreadId,
+}: {
+  activeThreadId: string | null;
+}) {
   const portalScope = usePortalScopeProps();
   const rpc = useRpc<typeof rpcContract>();
   const previousThreadId = useRef<string | null>(activeThreadId);
   const switches = useRef<ThreadSwitch[]>([]);
   const cooldownUntil = useRef(0);
-  const [visibleSwitchCount, setVisibleSwitchCount] = useState<number | null>(null);
-  const [videoIndex, setVideoIndex] = useState(() => Math.floor(Math.random() * CALM_VIDEO_URLS.length));
+  const [visibleSwitchCount, setVisibleSwitchCount] = useState<number | null>(
+    null,
+  );
+  const [videoIndex, setVideoIndex] = useState(() =>
+    Math.floor(Math.random() * CALM_VIDEO_URLS.length),
+  );
   const [scratchpad, setScratchpad] = useState("");
   const [scratchpadReady, setScratchpadReady] = useState(false);
   const scratchpadEdited = useRef(false);
@@ -38,29 +46,34 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
     let cancelled = false;
     let legacyContent = "";
     try {
-      legacyContent = window.localStorage.getItem(LEGACY_WORKOUT_SCRATCHPAD_KEY) ?? "";
+      legacyContent =
+        window.localStorage.getItem(LEGACY_WORKOUT_SCRATCHPAD_KEY) ?? "";
     } catch {
       // Continue without a browser-local migration value.
     }
-    void rpc.call("workout_scratchpad", legacyContent === "" ? {} : { legacyContent }).then(
-      ({ content }) => {
-        if (cancelled) return;
-        savedScratchpad.current = content;
-        if (!scratchpadEdited.current) setScratchpad(content);
-        setScratchpadReady(true);
-        try {
-          window.localStorage.removeItem(LEGACY_WORKOUT_SCRATCHPAD_KEY);
-        } catch {
-          // The server copy is authoritative even if legacy cleanup fails.
-        }
-      },
-      () => {
-        if (cancelled) return;
-        if (!scratchpadEdited.current) setScratchpad(legacyContent);
-        setScratchpadReady(true);
-      },
-    );
-    return () => { cancelled = true; };
+    void rpc
+      .call("workout_scratchpad", legacyContent === "" ? {} : { legacyContent })
+      .then(
+        ({ content }) => {
+          if (cancelled) return;
+          savedScratchpad.current = content;
+          if (!scratchpadEdited.current) setScratchpad(content);
+          setScratchpadReady(true);
+          try {
+            window.localStorage.removeItem(LEGACY_WORKOUT_SCRATCHPAD_KEY);
+          } catch {
+            // The server copy is authoritative even if legacy cleanup fails.
+          }
+        },
+        () => {
+          if (cancelled) return;
+          if (!scratchpadEdited.current) setScratchpad(legacyContent);
+          setScratchpadReady(true);
+        },
+      );
+    return () => {
+      cancelled = true;
+    };
   }, [rpc]);
 
   useEffect(() => {
@@ -87,7 +100,8 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
   }, []);
 
   useEffect(() => {
-    if (activeThreadId === null || activeThreadId === previousThreadId.current) return;
+    if (activeThreadId === null || activeThreadId === previousThreadId.current)
+      return;
     previousThreadId.current = activeThreadId;
 
     const now = Date.now();
@@ -96,8 +110,8 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
       { threadId: activeThreadId, at: now },
     ];
     if (
-      now >= cooldownUntil.current
-      && switches.current.length >= SWITCH_THRESHOLD
+      now >= cooldownUntil.current &&
+      switches.current.length >= SWITCH_THRESHOLD
     ) {
       setVideoIndex((current) => (current + 1) % CALM_VIDEO_URLS.length);
       setVisibleSwitchCount(switches.current.length);
@@ -106,56 +120,65 @@ export function ContextSwitchGuard({ activeThreadId }: { activeThreadId: string 
 
   if (visibleSwitchCount === null) return null;
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) dismiss(); }}>
-    <Dialog.Portal>
-    <Dialog.Content
-      {...portalScope}
-      className="fixed inset-0 z-[1000] grid overflow-hidden bg-slate-950 p-6 text-white"
+    <Dialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) dismiss();
+      }}
     >
-      <video
-        className="pointer-events-none absolute inset-0 h-full w-full object-cover"
-        src={CALM_VIDEO_URLS[videoIndex]}
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="auto"
-        aria-hidden="true"
-      />
-      <div className="pointer-events-none absolute inset-0 bg-black/30" />
-      <div className="relative m-auto w-full max-w-md rounded-2xl bg-black/40 px-8 py-7 text-center shadow-2xl backdrop-blur-xl">
-        <Dialog.Title className="text-2xl font-normal text-white">
-          Take a breather.
-        </Dialog.Title>
-        <Dialog.Description className="mt-3 text-sm leading-relaxed text-white/80">
-          You switched threads {visibleSwitchCount} times in under two minutes. Step away for a minute before opening another one.
-        </Dialog.Description>
-        <label htmlFor="context-switch-workout-scratchpad" className="mt-5 block text-left text-xs font-medium text-white/70">
-          Pushups / pullups scratchpad
-        </label>
-        <textarea
-          id="context-switch-workout-scratchpad"
-          value={scratchpad}
-          onChange={(event) => {
-            scratchpadEdited.current = true;
-            setScratchpad(event.target.value);
-          }}
-          maxLength={4_000}
-          rows={5}
-          placeholder={"Pushups: 30\nPullups: 8\nNotes: weak and shameful"}
-          className="mt-2 w-full resize-y rounded-md border border-white/20 bg-black/35 px-3 py-2 text-left font-mono text-sm leading-relaxed text-white outline-none placeholder:text-white/35 focus:border-white/50 focus:ring-1 focus:ring-white/30"
-        />
-        <button
-          type="button"
-          autoFocus
-          onClick={dismiss}
-          className="mt-6 rounded-md border border-white/20 bg-white/90 px-4 py-2 text-sm text-black outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-white"
+      <Dialog.Portal>
+        <Dialog.Content
+          {...portalScope}
+          className="fixed inset-0 z-[1000] grid overflow-hidden bg-slate-950 p-6 text-white"
         >
-          Got it
-        </button>
-      </div>
-    </Dialog.Content>
-    </Dialog.Portal>
+          <video
+            className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+            src={CALM_VIDEO_URLS[videoIndex]}
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="auto"
+            aria-hidden="true"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-black/30" />
+          <div className="relative m-auto w-full max-w-md rounded-2xl bg-black/40 px-8 py-7 text-center shadow-2xl backdrop-blur-xl">
+            <Dialog.Title className="text-2xl font-normal text-white">
+              Take a breather.
+            </Dialog.Title>
+            <Dialog.Description className="mt-3 text-sm leading-relaxed text-white/80">
+              You switched threads {visibleSwitchCount} times in under two
+              minutes. Step away for a minute before opening another one.
+            </Dialog.Description>
+            <label
+              htmlFor="context-switch-workout-scratchpad"
+              className="mt-5 block text-left text-xs font-medium text-white/70"
+            >
+              Pushups / pullups scratchpad
+            </label>
+            <textarea
+              id="context-switch-workout-scratchpad"
+              value={scratchpad}
+              onChange={(event) => {
+                scratchpadEdited.current = true;
+                setScratchpad(event.target.value);
+              }}
+              maxLength={4_000}
+              rows={5}
+              placeholder={"Pushups: 30\nPullups: 8\nNotes: weak and shameful"}
+              className="mt-2 w-full resize-y rounded-md border border-white/20 bg-black/35 px-3 py-2 text-left font-mono text-sm leading-relaxed text-white outline-none placeholder:text-white/35 focus:border-white/50 focus:ring-1 focus:ring-white/30"
+            />
+            <button
+              type="button"
+              autoFocus
+              onClick={dismiss}
+              className="mt-6 rounded-md border border-white/20 bg-white/90 px-4 py-2 text-sm text-black outline-none hover:bg-white focus-visible:ring-2 focus-visible:ring-white"
+            >
+              Got it
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
     </Dialog.Root>
   );
 }

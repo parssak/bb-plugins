@@ -3,16 +3,16 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "test": "node --test && vitest run sidebar.test.tsx sidebar-peek.test.tsx prompt-autocomplete.test.tsx",
+    "test": "node --test && vitest run sidebar.test.tsx sidebar-peek.test.tsx",
     "check": "tsc --noEmit"
   },
   "engines": {
-    "bb": ">=0.41",
-    "bbPluginSdk": ">=0.4.34"
+    "bb": ">=0.46",
+    "bbPluginSdk": ">=0.6.37"
   },
   "bb": {
     "name": "Threadflow",
-    "description": "Thread navigation, summaries, reviews, pull requests, and focus controls for BB.",
+    "description": "Attention groups, thread navigation, nested waits, and focus controls for BB.",
     "branding": {
       "logo": {
         "light": "./assets/logo.svg"
@@ -23,18 +23,10 @@
     "skills": []
   },
   "dependencies": {
-    "@tiptap/core": "^3.31.3",
-    "@tiptap/extension-code-block": "^3.31.3",
-    "@tiptap/extension-list": "^3.31.3",
-    "@tiptap/extension-placeholder": "^3.31.3",
-    "@tiptap/extension-table": "^3.31.3",
-    "@tiptap/markdown": "^3.31.3",
-    "@tiptap/pm": "^3.31.3",
-    "@tiptap/starter-kit": "^3.31.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@get-bb/plugin-sdk": "0.5.29",
+    "@get-bb/plugin-sdk": "0.6.37",
     "@hugeicons/core-free-icons": "^4.3.0",
     "@hugeicons/react": "^1.1.10",
     "@pierre/diffs": "^1.2.9",
@@ -47,6 +39,7 @@
     "@radix-ui/react-navigation-menu": "^1.2.18",
     "@radix-ui/react-popover": "^1.1.19",
     "@radix-ui/react-select": "^2.3.3",
+    "@radix-ui/react-slot": "^1.4.0",
     "@radix-ui/react-tooltip": "^1.2.12",
     "@testing-library/react": "^16.3.3",
     "@types/better-sqlite3": "^7.6.13",

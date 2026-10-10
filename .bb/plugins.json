@@ -1,0 +1,12 @@
+{
+  "$schema": "https://getbb.app/schemas/plugins.schema.json",
+  "schemaVersion": 1,
+  "name": "parssa-plugins",
+  "plugins": [
+    { "name": "threadflow", "source": "./bb-plugin-threadflow" },
+    { "name": "journal", "source": "./bb-plugin-journal" },
+    { "name": "chat-tools", "source": "./bb-plugin-chat-tools" },
+    { "name": "usage-insights", "source": "./bb-plugin-usage-insights" },
+    { "name": "thread-nudger", "source": "./bb-plugin-thread-nudger" }
+  ]
+}

@@ -1,0 +1,356 @@
+.threadflow-journal-editor .tiptap {
+  min-height: 100%;
+  padding-bottom: 35vh;
+  color: var(--foreground);
+  font-size: var(--journal-font-size, 16px);
+  line-height: var(--journal-line-height, 1.75);
+  letter-spacing: var(--journal-letter-spacing, 0px);
+  outline: none;
+  overflow-wrap: break-word;
+  tab-size: 2;
+}
+
+.threadflow-journal-editor .tiptap > :first-child,
+.threadflow-journal-editor .tiptap li > :first-child,
+.threadflow-journal-editor .tiptap :is(td, th) > :first-child,
+.threadflow-journal-editor .tiptap blockquote > :first-child {
+  margin-top: 0;
+}
+
+.threadflow-journal-editor .tiptap p {
+  margin-top: var(--journal-paragraph-spacing, 1em);
+}
+
+.threadflow-journal-editor .tiptap :is(h1, h2, h3, h4, h5, h6) {
+  margin-bottom: 0;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.threadflow-journal-editor .tiptap h1 {
+  margin-top: 1.25em;
+  font-size: 1.75em;
+  line-height: 1.3;
+}
+.threadflow-journal-editor .tiptap h2 {
+  margin-top: 1.6em;
+  font-size: 1.35em;
+  line-height: 1.4;
+}
+.threadflow-journal-editor .tiptap h3 {
+  margin-top: 1.35em;
+  font-size: 1.15em;
+  line-height: 1.45;
+}
+.threadflow-journal-editor .tiptap :is(h4, h5, h6) {
+  margin-top: 1.25em;
+  font-size: 1em;
+  line-height: 1.5;
+}
+
+.threadflow-journal-editor .tiptap :is(ul, ol) {
+  margin-block: var(--journal-list-spacing, 1em);
+  padding-left: 1.5em;
+}
+
+.threadflow-journal-editor .tiptap ul {
+  list-style: disc;
+}
+.threadflow-journal-editor .tiptap ol {
+  list-style: decimal;
+}
+.threadflow-journal-editor .tiptap li {
+  margin-block: var(--journal-list-item-spacing, 0.35em);
+  padding-left: 0.25em;
+}
+.threadflow-journal-editor .tiptap li::marker {
+  color: var(--warning);
+}
+.threadflow-journal-editor .tiptap li > :is(p, ul, ol) {
+  margin-top: 0.35em;
+}
+
+.threadflow-journal-editor .tiptap table {
+  width: 100%;
+  margin-block: var(--journal-list-spacing, 1em);
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.threadflow-journal-editor .tiptap :is(td, th) {
+  position: relative;
+  min-width: 5em;
+  padding: 0.4em 0.55em;
+  border: 1px solid
+    color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+  vertical-align: top;
+}
+
+.threadflow-journal-editor .tiptap th {
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+  font-weight: 600;
+  text-align: left;
+}
+
+.threadflow-journal-editor .tiptap :is(td, th) p {
+  margin-block: 0;
+}
+.threadflow-journal-editor .tiptap .selectedCell::after {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.threadflow-journal-editor .tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.threadflow-journal-editor
+  .tiptap
+  ul[data-type="taskList"]
+  ul[data-type="taskList"] {
+  margin-top: 0;
+  padding-left: 1.5em;
+}
+
+.threadflow-journal-editor .tiptap ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6em;
+  padding-left: 0;
+}
+
+.threadflow-journal-editor .tiptap ul[data-type="taskList"] li > label {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  width: 16px;
+  height: calc(var(--journal-line-height, 1.75) * 1em);
+  user-select: none;
+}
+
+.threadflow-journal-editor .tiptap ul[data-type="taskList"] li > label::before {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  border: 1px solid
+    color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+  border-radius: 5px;
+  background: var(--background);
+  content: "";
+  transform: translateY(-50%);
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.threadflow-journal-editor .tiptap ul[data-type="taskList"] li > label::after {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  background: var(--background);
+  content: "";
+  opacity: 0;
+  transform: translateY(-50%);
+  -webkit-mask: center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.25 4.75 9 10 3.5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  mask: center / contain no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.25 4.75 9 10 3.5' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  transition: opacity 100ms ease;
+}
+
+.threadflow-journal-editor
+  .tiptap
+  ul[data-type="taskList"]
+  li
+  > label:hover::before {
+  border-color: var(--warning);
+}
+
+.threadflow-journal-editor
+  .tiptap
+  ul[data-type="taskList"]
+  li
+  > label:has(input:focus-visible)::before {
+  border-color: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--warning) 22%, transparent);
+}
+
+.threadflow-journal-editor
+  .tiptap
+  ul[data-type="taskList"]
+  li
+  > label:has(input:checked)::before {
+  border-color: var(--warning);
+  background: var(--warning);
+}
+
+.threadflow-journal-editor
+  .tiptap
+  ul[data-type="taskList"]
+  li
+  > label:has(input:checked)::after {
+  opacity: 1;
+}
+
+.threadflow-journal-editor .tiptap ul[data-type="taskList"] li > div {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.threadflow-journal-editor
+  .tiptap
+  ul[data-type="taskList"]
+  li
+  > div
+  > p:first-child {
+  margin-top: 0;
+}
+
+.threadflow-journal-editor
+  .tiptap
+  ul[data-type="taskList"]
+  input[type="checkbox"] {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  appearance: none;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+}
+
+.threadflow-journal-editor
+  .tiptap
+  ul[data-type="taskList"]
+  li[data-checked="true"]
+  > div {
+  opacity: 0.55;
+}
+
+.threadflow-journal-editor .tiptap blockquote {
+  margin-top: 1em;
+  border-left: 2px solid var(--border);
+  padding-left: 1em;
+  color: var(--muted-foreground);
+}
+
+.threadflow-journal-editor .tiptap code {
+  border-radius: 0.25rem;
+  background: var(--muted);
+  padding: 0.1em 0.3em;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.875em;
+}
+
+.threadflow-journal-editor .tiptap pre {
+  margin-top: 1em;
+  overflow-x: auto;
+  border-radius: var(--radius);
+  background: var(--muted);
+  padding: 0.75em 1em;
+  font-size: 0.875em;
+  line-height: 1.5;
+}
+
+.threadflow-journal-editor .tiptap pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+.threadflow-journal-editor .tiptap .threadflow-journal-mermaid-preview {
+  margin-top: 0.5em;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+}
+.threadflow-journal-editor
+  .tiptap
+  .threadflow-journal-mermaid-preview
+  > :first-child {
+  margin: 0;
+}
+.threadflow-journal-editor .tiptap strong {
+  font-weight: 600;
+}
+.threadflow-journal-editor .tiptap a {
+  color: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 35%, transparent);
+}
+.threadflow-journal-editor .tiptap a:hover {
+  text-decoration-color: currentColor;
+}
+.threadflow-journal-editor .tiptap a[href^="threadflow://thread/"]
+{
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--muted);
+  padding: 0 0.4em;
+  color: var(--foreground);
+  font-weight: 500;
+  line-height: 1.45;
+  text-decoration: none;
+  vertical-align: baseline;
+}
+.threadflow-journal-editor .tiptap a[href^="threadflow://thread/"]:hover
+{
+  background: color-mix(in oklab, var(--muted-foreground) 16%, var(--muted));
+}
+.threadflow-journal-editor
+  .tiptap
+  a[data-threadflow-thread-status="in-progress"] {
+  border-color: color-mix(in oklab, var(--warning) 42%, var(--border));
+  background: color-mix(in oklab, var(--warning) 10%, transparent);
+  color: var(--warning);
+}
+.threadflow-journal-editor
+  .tiptap
+  a[data-threadflow-thread-status="in-progress"]:hover {
+  background: color-mix(in oklab, var(--warning) 17%, transparent);
+}
+.threadflow-journal-editor .tiptap a[data-threadflow-thread-status="archived"] {
+  border-color: color-mix(in oklab, var(--success) 42%, var(--border));
+  background: color-mix(in oklab, var(--success) 10%, transparent);
+  color: var(--success);
+}
+.threadflow-journal-editor
+  .tiptap
+  a[data-threadflow-thread-status="archived"]:hover {
+  background: color-mix(in oklab, var(--success) 17%, transparent);
+}
+.threadflow-journal-editor .tiptap hr {
+  margin-top: 2em;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.threadflow-journal-editor .tiptap p.is-editor-empty:first-child::before {
+  float: left;
+  height: 0;
+  color: color-mix(in oklab, var(--muted-foreground) 55%, transparent);
+  content: attr(data-placeholder);
+  pointer-events: none;
+}
+
+.threadflow-journal-editor .tiptap ::selection {
+  background: color-mix(in oklab, var(--primary) 22%, transparent);
+}

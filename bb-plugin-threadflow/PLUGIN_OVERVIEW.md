@@ -1,0 +1,1 @@
+Threadflow groups threads by attention and working state, nests dependencies, and provides durable waits. BB owns the live thread cache, rail, splits, and archive pagination. Optional review and summary commands use the separate Chat tools plugin.

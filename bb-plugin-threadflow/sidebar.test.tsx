@@ -1,231 +1,179 @@
 // @vitest-environment jsdom
 import { afterEach, expect, test } from "vitest";
-import { fireEvent, waitFor, cleanup } from "@testing-library/react";
+import { cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
-
+import type { PluginSidebarThread } from "@get-bb/plugin-sdk/app";
 afterEach(cleanup);
-
-test("compact navigation omits host destinations without a private DOM portal target", async () => {
+function thread(
+  id: string,
+  overrides: Partial<PluginSidebarThread> = {},
+): PluginSidebarThread {
+  return {
+    id,
+    title: id,
+    displayTitle: id,
+    projectId: "personal",
+    parentThreadId: null,
+    sourceThreadId: null,
+    sectionId: null,
+    originKind: null,
+    originPluginId: null,
+    providerId: "codex",
+    status: "idle",
+    runtimeStatus: "idle",
+    queuedWork: "none",
+    hasPendingInteraction: false,
+    activity: { backgroundCommands: 0 },
+    indicator: "none",
+    indicatorLabel: null,
+    isUnread: false,
+    isPinned: false,
+    pinnedAt: null,
+    pinSortKey: null,
+    isArchived: false,
+    archivedAt: null,
+    href: `/threads/${id}`,
+    isHidden: false,
+    environment: null,
+    host: null,
+    createdAt: 1,
+    updatedAt: 1,
+    lastReadAt: null,
+    latestAttentionAt: 1,
+    ...overrides,
+  } as PluginSidebarThread;
+}
+test("Threadflow reads host rows and navigates without Journal, Usage, or Chat tools", async () => {
   const app = await loadPluginApp(() => import("./app"));
-  const items = [
-    { id: "new", label: "New thread", action: { kind: "new-thread" }, icon: { kind: "host", name: "new-thread" } },
-    { id: "search", label: "Search threads", action: { kind: "search-threads" }, icon: { kind: "host", name: "search" } },
-    { id: "journal", label: "Journal", action: { kind: "open-plugin-panel", pluginId: "threadflow", panelId: "journal" }, icon: { kind: "plugin", pluginId: "threadflow", icon: null } },
-  ].map((item) => ({ ...item, isDisabled: false, isVisible: true, isLoading: false, pluginId: null, shortcut: null, experimental_Accessory: null }));
-  const slot = renderSlot(app.experimentalSidebarNavigations[0]!, {
-    isCompactViewport: false,
-    experimental_Original: () => <div>Native navigation</div>,
-  }, {
-    sidebarNavigation: { items, activeItemId: null },
-    rpc: { threads: () => ({ threads: [], generatedAt: 1 }) },
-  });
-  fireEvent.click(slot.getByRole("button", { name: "New thread" }));
-  expect(slot.queryByRole("button", { name: "Search threads" })).toBeNull();
-  expect(slot.getByRole("button", { name: "Show archived threads" })).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "Open Journal" }));
-  expect(slot.inspection.sidebarNavigationCalls).toEqual([
-    { method: "activate", itemId: "new", openInSplit: false },
-    { method: "activate", itemId: "journal", openInSplit: false },
-  ]);
-  slot.lifecycle.unmount();
-});
-
-test("sidebar leaves unrelated controls and dialogs in charge of keyboard input", async () => {
-  const app = await loadPluginApp(() => import("./app"));
-  const slot = renderSlot(app.threadLists[0]!, {
-    activeThreadId: "thread-one", activeProjectId: null, isCompactViewport: false,
-    onNavigate: () => {}, searchQuery: "", Original: () => null,
-  }, { rpc: {
-    threads: () => ({ threads: [{ id: "thread-one", title: "Example thread", projectId: "personal", project: "Personal", provider: "codex", createdAt: 1, updatedAt: 1, archivedAt: null, archived: false, needsAttention: false, queuedWork: "none", scheduledSendAt: null, waitingForThreadIds: [], status: "idle", sideChats: [] }], generatedAt: 1 }),
-    codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
-  } });
-  const row = await waitFor(() => slot.getByRole("link", { name: "Example thread" }));
-  // BB's native numbered shortcuts only collect HTMLAnchorElement targets.
+  expect(app.navPanels).toHaveLength(0);
+  expect(app.threadPanelActions).toHaveLength(0);
+  const slot = renderSlot(
+    app.threadLists[0]!,
+    {
+      activeThreadId: "one",
+      activeProjectId: null,
+      isCompactViewport: false,
+      onNavigate: () => {},
+      searchQuery: "",
+    },
+    {
+      sidebarThreads: { threads: [thread("one")], projects: [] },
+      rpc: {
+        wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }),
+      },
+    },
+  );
+  const row = await slot.findByRole("link", { name: "one" });
   expect(row).toBeInstanceOf(HTMLAnchorElement);
   expect(row.getAttribute("data-sidebar-thread-shortcut-target")).toBe("");
-  expect(row.getAttribute("data-sidebar-thread-id")).toBe("thread-one");
-  expect(row.getAttribute("href")).toBe("/threads/thread-one");
   fireEvent.click(row);
-  expect(slot.inspection.sidebarActionCalls).toContainEqual(expect.objectContaining({ method: "open", threadId: "thread-one" }));
-  row.focus();
-  const arrow = new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true });
-  row.dispatchEvent(arrow);
-  expect(arrow.defaultPrevented).toBe(false);
-  expect(slot.queryByText("1", { selector: "kbd" })).toBeNull();
-  fireEvent.keyDown(window, { key: "Meta", metaKey: true });
-  expect(slot.getByText("1", { selector: "kbd" })).toBeTruthy();
-  fireEvent.keyUp(window, { key: "Meta" });
-  expect(slot.queryByText("1", { selector: "kbd" })).toBeNull();
-  const button = document.createElement("button");
-  document.body.append(button);
-  button.focus();
-  const key = new KeyboardEvent("keydown", { key: "x", bubbles: true, cancelable: true });
-  button.dispatchEvent(key);
-  expect(key.defaultPrevented).toBe(false);
+  expect(slot.inspection.navigateCalls).toContainEqual(
+    expect.objectContaining({ method: "toThread", threadId: "one" }),
+  );
+  expect(slot.inspection.rpcCalls.some((c) => c.method === "threads")).toBe(
+    false,
+  );
+  slot.lifecycle.unmount();
+});
+test("declared wait dependencies nest beneath their parent using host state", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const slot = renderSlot(
+    app.threadLists[0]!,
+    {
+      activeThreadId: null,
+      activeProjectId: null,
+      isCompactViewport: false,
+      onNavigate: () => {},
+      searchQuery: "",
+    },
+    {
+      sidebarThreads: {
+        threads: [
+          thread("parent", { queuedWork: "waiting" }),
+          thread("child", { status: "active", runtimeStatus: "active" }),
+        ],
+        projects: [],
+      },
+      rpc: {
+        wait_dependencies: () => ({
+          dependencies: [
+            { waitingThreadId: "parent", targetThreadIds: ["child"] },
+          ],
+          scheduledSends: [],
+        }),
+      },
+    },
+  );
+  await waitFor(() =>
+    expect(
+      slot.getByRole("link", { name: "child" }).closest(".border-l"),
+    ).toBeTruthy(),
+  );
+  expect(slot.getAllByRole("link", { name: "child" })).toHaveLength(1);
+  slot.lifecycle.unmount();
+});
+test("sidebar leaves dialogs and unrelated controls in charge of keyboard input", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const slot = renderSlot(
+    app.threadLists[0]!,
+    {
+      activeThreadId: "one",
+      activeProjectId: null,
+      isCompactViewport: false,
+      onNavigate: () => {},
+      searchQuery: "",
+    },
+    {
+      sidebarThreads: { threads: [thread("one")], projects: [] },
+      rpc: { wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }) },
+    },
+  );
+  await slot.findByRole("link", { name: "one" });
   const dialog = document.createElement("div");
   dialog.setAttribute("role", "dialog");
-  dialog.append(button);
+  const input = document.createElement("input");
+  dialog.append(input);
   document.body.append(dialog);
-  const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
-  button.dispatchEvent(escape);
-  expect(escape.defaultPrevented).toBe(false);
+  input.focus();
+  const event = new KeyboardEvent("keydown", {
+    key: "x",
+    bubbles: true,
+    cancelable: true,
+  });
+  input.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(false);
   dialog.remove();
   slot.lifecycle.unmount();
 });
 
-test("sidebar labels cycle casing and only show a count when snoozed is collapsed", async () => {
-  window.localStorage.clear();
+test("canonical child threads nest once and hidden worker roots stay out of the list", async () => {
   const app = await loadPluginApp(() => import("./app"));
-  const baseThread = {
-    projectId: "personal",
-    project: "Personal",
-    provider: "codex",
-    createdAt: 1,
-    updatedAt: 1,
-    archivedAt: null,
-    archived: false,
-    needsAttention: false,
-    scheduledSendAt: null,
-    waitingForThreadIds: [],
-    sideChats: [],
-  };
   const slot = renderSlot(app.threadLists[0]!, {
-    activeThreadId: null, activeProjectId: null, isCompactViewport: false,
-    onNavigate: () => {}, searchQuery: "", Original: () => null,
-  }, { rpc: {
-    threads: () => ({ threads: [
-      { ...baseThread, id: "thread-needs-you", title: "Ready", needsAttention: true, queuedWork: "none", status: "idle" },
-      { ...baseThread, id: "thread-working", title: "Running", queuedWork: "none", status: "active" },
-      { ...baseThread, id: "thread-waiting", title: "Paused", queuedWork: "waiting", status: "idle" },
-    ], generatedAt: 1 }),
-    codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
-  } });
-
-  const needsYou = await waitFor(() => slot.getByRole("button", { name: "needs you" }));
-  expect(needsYou.parentElement?.textContent).toBe("needs you");
-  expect(slot.getByRole("button", { name: "working" }).parentElement?.textContent).toBe("working");
-  const collapse = slot.getByRole("button", { name: "Collapse snoozed section" });
-  expect(collapse.parentElement?.textContent).toBe("snoozed");
-
-  fireEvent.click(needsYou);
-  expect(slot.getByRole("button", { name: "Needs you" })).toBeTruthy();
-  expect(slot.getByRole("button", { name: "Snoozed" })).toBeTruthy();
-  fireEvent.click(slot.getByRole("button", { name: "Needs you" }));
-  expect(slot.getByRole("button", { name: "NEEDS YOU" })).toBeTruthy();
-  expect(slot.getByRole("button", { name: "SNOOZED" })).toBeTruthy();
-
-  fireEvent.click(collapse);
-  const expand = slot.getByRole("button", { name: "Expand snoozed section" });
-  expect(expand.parentElement?.textContent).toBe("SNOOZED1");
-  expect(slot.queryByRole("link", { name: "Paused" })).toBeNull();
-  expect(window.localStorage.getItem("threadflow:sidebar-label-case:v1")).toBe("upper");
-  slot.lifecycle.unmount();
-  window.localStorage.clear();
-});
-
-test("visible child rows use BB's native split-thread navigation", async () => {
-  const app = await loadPluginApp(() => import("./app"));
-  const child = {
-    id: "thread-child",
-    title: "Delegated task",
-    sourceThreadId: "thread-parent",
-    createdAt: 2,
-    needsAttention: false,
-    running: true,
-    closeable: false,
-    navigation: "split",
-  };
-  const slot = renderSlot(app.threadLists[0]!, {
-    activeThreadId: "thread-parent", activeProjectId: null, isCompactViewport: false,
-    onNavigate: () => {}, searchQuery: "", Original: () => null,
-  }, { rpc: {
-    threads: () => ({ threads: [{ id: "thread-parent", title: "Parent thread", projectId: "personal", project: "Personal", provider: "codex", createdAt: 1, updatedAt: 1, archivedAt: null, archived: false, needsAttention: false, queuedWork: "none", scheduledSendAt: null, waitingForThreadIds: [], status: "idle", sideChats: [child] }], generatedAt: 1 }),
-    codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
-  } });
-
-  fireEvent.click(await waitFor(() => slot.getByRole("link", { name: "Delegated task" })));
-
-  expect(slot.inspection.sidebarActionCalls).toContainEqual({
-    method: "open",
-    threadId: "thread-child",
-    options: { split: true },
-  });
-  expect(slot.inspection.navigateCalls.some((call) => call.method === "openThreadPanel")).toBe(false);
-  slot.lifecycle.unmount();
-});
-
-test("hidden Threadflow reviews navigate directly to the review thread", async () => {
-  const app = await loadPluginApp(() => import("./app"));
-  const review = {
-    id: "thread-review",
-    title: "Review",
-    sourceThreadId: "thread-parent",
-    createdAt: 2,
-    needsAttention: false,
-    running: true,
-    closeable: true,
-    navigation: "thread",
-  };
-  const slot = renderSlot(app.threadLists[0]!, {
-    activeThreadId: "thread-parent", activeProjectId: null, isCompactViewport: false,
-    onNavigate: () => {}, searchQuery: "", Original: () => null,
+    activeThreadId: null,
+    activeProjectId: null,
+    isCompactViewport: false,
+    onNavigate: () => {},
+    searchQuery: "",
   }, {
-    rpc: {
-      threads: () => ({ threads: [{ id: "thread-parent", title: "Parent thread", projectId: "personal", project: "Personal", provider: "codex", createdAt: 1, updatedAt: 1, archivedAt: null, archived: false, needsAttention: false, queuedWork: "none", scheduledSendAt: null, waitingForThreadIds: [], status: "idle", sideChats: [review] }], generatedAt: 1 }),
-      codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
+    sidebarThreads: {
+      threads: [
+        thread("parent"),
+        thread("child", { parentThreadId: "parent" }),
+        thread("legacy-review", {
+          parentThreadId: "parent", isHidden: true,
+          originKind: "fork", originPluginId: "threadflow",
+        }),
+        thread("worker", { isHidden: true }),
+      ],
+      projects: [],
     },
+    rpc: { wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }) },
   });
-
-  const row = await waitFor(() => slot.getByRole("link", { name: "Review" }));
-  expect(row.getAttribute("href")).toBe("/threads/thread-review");
-  fireEvent.click(row);
-
-  expect(slot.inspection.navigateCalls).toContainEqual({ method: "toThread", threadId: "thread-review" });
-  expect(slot.inspection.sidebarActionCalls).not.toContainEqual(expect.objectContaining({ threadId: "thread-parent" }));
-  expect(slot.inspection.navigateCalls.some((call) => call.method === "openThreadPanel")).toBe(false);
-  slot.lifecycle.unmount();
-});
-
-test("sidebar replays a realtime refresh that arrives during an existing load", async () => {
-  const app = await loadPluginApp(() => import("./app"));
-  const activeThread = {
-    id: "thread-race",
-    title: "Archived while loading",
-    projectId: "personal",
-    project: "Personal",
-    provider: "codex",
-    createdAt: 1,
-    updatedAt: 1,
-    archivedAt: null,
-    archived: false,
-    needsAttention: false,
-    queuedWork: "none",
-    scheduledSendAt: null,
-    waitingForThreadIds: [],
-    status: "idle",
-    sideChats: [],
-  };
-  let resolveFirstLoad: ((value: { threads: typeof activeThread[]; generatedAt: number }) => void) | undefined;
-  let threadLoads = 0;
-  const slot = renderSlot(app.threadLists[0]!, {
-    activeThreadId: null, activeProjectId: null, isCompactViewport: false,
-    onNavigate: () => {}, searchQuery: "", Original: () => null,
-  }, { rpc: {
-    threads: () => {
-      threadLoads += 1;
-      if (threadLoads === 1) {
-        return new Promise((resolve) => { resolveFirstLoad = resolve; });
-      }
-      return { threads: [], generatedAt: 2 };
-    },
-    codex_usage: () => ({ status: "unavailable", message: "Unavailable" }),
-  } });
-
-  await waitFor(() => expect(threadLoads).toBe(1));
-  await slot.behavior.emitRealtime("threads-changed", null);
-  resolveFirstLoad?.({ threads: [activeThread], generatedAt: 1 });
-
-  await waitFor(() => expect(threadLoads).toBe(2));
-  await waitFor(() => expect(slot.queryByRole("link", { name: activeThread.title })).toBeNull());
+  for (const id of ["child", "legacy-review"]) {
+    const row = await slot.findByRole("link", { name: id });
+    expect(row.closest(".border-l")).toBeTruthy();
+    expect(slot.getAllByRole("link", { name: id })).toHaveLength(1);
+  }
+  expect(slot.queryByRole("link", { name: "worker" })).toBeNull();
   slot.lifecycle.unmount();
 });
