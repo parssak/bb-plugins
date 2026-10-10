@@ -27,6 +27,7 @@ import type {
 } from "@get-bb/plugin-sdk/app";
 import type { NativeSideChat, NativeThread, rpcContract } from "./contract";
 import { useThreadflowThreads } from "./hooks/use-threadflow-threads";
+import { ArchiveThreadButton } from "./archive-controls";
 import { toast } from "sonner";
 import { Button } from "./components/ui/button";
 import {
@@ -209,16 +210,11 @@ function PullRequestLink({
 }
 
 function useThreadCommand(threadId: string | null) {
-  const rpc = useRpc<typeof rpcContract>();
   const sdk = useSdk();
   const navigate = useBbNavigate();
   return useCallback(
     async (key: string, shiftKey: boolean) => {
       if (!threadId || !shiftKey) return false;
-      if (key === "a") {
-        await rpc.call("toggle_archived", { id: threadId });
-        return true;
-      }
       if (key === "e") {
         const result = await sdk.plugins.callRpc({
           pluginId: "chat-tools",
@@ -249,7 +245,7 @@ function useThreadCommand(threadId: string | null) {
       }
       return false;
     },
-    [rpc, sdk, navigate, threadId],
+    [sdk, navigate, threadId],
   );
 }
 
@@ -550,6 +546,7 @@ function SidebarThreadRow({
         {pullRequest === null ? null : (
           <PullRequestLink pullRequest={pullRequest} />
         )}
+        <ArchiveThreadButton threadId={thread.id} title={thread.title} />
       </div>
       {thread.sideChats.length > 0 ? (
         <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border/60 pl-1.5">
@@ -1095,7 +1092,7 @@ function ActiveThreadList({
         !event.ctrlKey &&
         !event.altKey &&
         event.shiftKey &&
-        ["e", "a"].includes(commandKey) &&
+        commandKey === "e" &&
         listRef.current?.contains(document.activeElement)
       ) {
         event.preventDefault();

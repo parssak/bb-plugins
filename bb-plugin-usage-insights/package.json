@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --test"
+    "test": "node --test && vitest run sidebar-usage.test.tsx"
   },
   "engines": {
     "bb": ">=0.46",
@@ -12,7 +12,7 @@
   },
   "bb": {
     "name": "Usage insights",
-    "description": "Codex allowance history, daily consumption, and reset forecasts.",
+    "description": "Codex and Claude Code quota windows, allowance history, and daily consumption.",
     "branding": {
       "icon": "ChartColumn"
     },

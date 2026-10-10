@@ -2,10 +2,15 @@ import { definePluginApp, useBbContext } from "@get-bb/plugin-sdk/app";
 import { CompactThreadList } from "./sidebar";
 import { WaitComposerBridge } from "./wait-status";
 import { ContextSwitchGuard } from "./context-switch-guard";
-import { mountSidebarPeek } from "./sidebar-peek";
+import { ArchiveShortcut } from "./archive-controls";
 function ContextSwitchOverlay() {
   const { threadId } = useBbContext();
-  return <ContextSwitchGuard activeThreadId={threadId} />;
+  return (
+    <>
+      <ArchiveShortcut activeThreadId={threadId} />
+      <ContextSwitchGuard activeThreadId={threadId} />
+    </>
+  );
 }
 export default definePluginApp((app) => {
   app.slots.experimental_threadList({
@@ -17,7 +22,6 @@ export default definePluginApp((app) => {
     id: "context-switch-guard",
     component: ContextSwitchOverlay,
   });
-  app.contentScripts.register({ id: "sidebar-peek", mount: mountSidebarPeek });
   app.composer.customize({
     id: "wait-status",
     scopes: ["thread"],

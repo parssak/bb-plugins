@@ -6,7 +6,9 @@ Threadflow reads BB's live thread cache and host navigation APIs. It owns durabl
 
 Journal, Chat tools, and Usage insights are independent sibling packages. Journal has its own rail entry. Review and TLDR shortcuts invoke Chat tools through BB's public RPC API; the thread list and waits work without it.
 
-Shortcuts: Command-number opens visible threads; Command-Shift-A toggles archive; Command-Shift-E opens a review through Chat tools; Command-Shift-T toggles TLDR through Chat tools. BB owns the rail, compose navigation, panels, and terminal handling.
+Hover or focus a thread row to reveal its archive button.
+
+Shortcuts: Command-number opens visible threads; Command-Shift-A toggles archive for the focused row or active chat, including split panes; Command-Shift-E opens a review through Chat tools; Command-Shift-T toggles TLDR through Chat tools. BB owns the rail, compose navigation, panels, and terminal handling.
 
 ```sh
 npm ci

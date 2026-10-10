@@ -60,6 +60,7 @@ test("Threadflow reads host rows and navigates without Journal, Usage, or Chat t
       sidebarThreads: { threads: [thread("one")], projects: [] },
       rpc: {
         wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }),
+        toggle_archived: () => ({ archived: true }),
       },
     },
   );
@@ -72,6 +73,15 @@ test("Threadflow reads host rows and navigates without Journal, Usage, or Chat t
   );
   expect(slot.inspection.rpcCalls.some((c) => c.method === "threads")).toBe(
     false,
+  );
+  fireEvent.click(slot.getByRole("button", { name: "Archive one" }));
+  await waitFor(() =>
+    expect(slot.inspection.rpcCalls).toContainEqual(
+      expect.objectContaining({
+        method: "toggle_archived",
+        input: { id: "one" },
+      }),
+    ),
   );
   slot.lifecycle.unmount();
 });
@@ -125,7 +135,9 @@ test("sidebar leaves dialogs and unrelated controls in charge of keyboard input"
     },
     {
       sidebarThreads: { threads: [thread("one")], projects: [] },
-      rpc: { wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }) },
+      rpc: {
+        wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }),
+      },
     },
   );
   await slot.findByRole("link", { name: "one" });
@@ -148,27 +160,35 @@ test("sidebar leaves dialogs and unrelated controls in charge of keyboard input"
 
 test("canonical child threads nest once and hidden worker roots stay out of the list", async () => {
   const app = await loadPluginApp(() => import("./app"));
-  const slot = renderSlot(app.threadLists[0]!, {
-    activeThreadId: null,
-    activeProjectId: null,
-    isCompactViewport: false,
-    onNavigate: () => {},
-    searchQuery: "",
-  }, {
-    sidebarThreads: {
-      threads: [
-        thread("parent"),
-        thread("child", { parentThreadId: "parent" }),
-        thread("legacy-review", {
-          parentThreadId: "parent", isHidden: true,
-          originKind: "fork", originPluginId: "threadflow",
-        }),
-        thread("worker", { isHidden: true }),
-      ],
-      projects: [],
+  const slot = renderSlot(
+    app.threadLists[0]!,
+    {
+      activeThreadId: null,
+      activeProjectId: null,
+      isCompactViewport: false,
+      onNavigate: () => {},
+      searchQuery: "",
     },
-    rpc: { wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }) },
-  });
+    {
+      sidebarThreads: {
+        threads: [
+          thread("parent"),
+          thread("child", { parentThreadId: "parent" }),
+          thread("legacy-review", {
+            parentThreadId: "parent",
+            isHidden: true,
+            originKind: "fork",
+            originPluginId: "threadflow",
+          }),
+          thread("worker", { isHidden: true }),
+        ],
+        projects: [],
+      },
+      rpc: {
+        wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }),
+      },
+    },
+  );
   for (const id of ["child", "legacy-review"]) {
     const row = await slot.findByRole("link", { name: id });
     expect(row.closest(".border-l")).toBeTruthy();

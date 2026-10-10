@@ -1,32 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
-import type { rpcContract } from "./contract";
+import type { rpcContract, UsageProviderId, UsageResult } from "./contract";
 import {
   createResetForecastLoader,
   formatResetForecast,
   type ResetForecastResult,
 } from "./reset-forecast";
-import {
-  parseUsageSamples,
-  type TodayUsageEstimate,
-  type UsageSample,
-} from "./usage-tracking";
+import { parseUsageSamples, type UsageSample } from "./usage-tracking";
 
 const LEGACY_USAGE_SAMPLES_STORAGE_KEY = "threadflow:codex-usage-samples:v1";
-const MAX_LEGACY_USAGE_SAMPLES = 2_048;
-
-type CodexUsage =
-  | {
-      status: "ok";
-      planLabel: string | null;
-      windows: Array<{
-        label: string;
-        resetsAt: string | null;
-        usedPercent: number;
-      }>;
-      todayUsage: TodayUsageEstimate | null;
-    }
-  | { status: "unavailable"; message: string };
+const PROVIDERS = [
+  { id: "codex", label: "Codex" },
+  { id: "claude-code", label: "Claude Code" },
+] as const;
 
 function formatUsageReset(resetsAt: string | null): string | null {
   if (resetsAt === null) return null;
@@ -46,49 +32,106 @@ function localDayStart(timestamp: number): number {
   return date.getTime();
 }
 
-function formatTodayUsage(usedPercent: number): string {
-  return `${Math.round(usedPercent)}% today`;
+export function ProviderUsageCard({
+  label,
+  usage,
+}: {
+  label: string;
+  usage: UsageResult | null;
+}) {
+  return (
+    <section aria-label={`${label} usage`} className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <span className="font-medium">{label}</span>
+        {usage?.status === "ok" && usage.planLabel ? (
+          <span className="truncate text-muted-foreground">
+            {usage.planLabel}
+          </span>
+        ) : null}
+      </div>
+      {usage === null ? (
+        <p className="text-[10px] text-muted-foreground">Loading usage…</p>
+      ) : usage.status === "unavailable" ? (
+        <p role="status" className="text-[10px] text-muted-foreground">
+          {usage.message}
+        </p>
+      ) : (
+        <>
+          {usage.windows.length === 0 ? (
+            <p className="text-[10px] text-muted-foreground">
+              No usage limits reported
+            </p>
+          ) : null}
+          {usage.windows.map((window, index) => {
+            const usedPercent = Math.min(100, Math.max(0, window.usedPercent));
+            const reset = formatUsageReset(window.resetsAt);
+            return (
+              <div key={`${window.label}:${index}`} className="space-y-1">
+                <div className="flex justify-between gap-2 text-[10px] text-muted-foreground">
+                  <span>{window.label}</span>
+                  <span className="shrink-0">
+                    {Math.round(100 - usedPercent)}% left
+                    {reset ? ` • ${reset}` : ""}
+                  </span>
+                </div>
+                <div
+                  role="progressbar"
+                  aria-label={`${label} ${window.label} usage`}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(usedPercent)}
+                  className="h-1 overflow-hidden rounded-full bg-muted"
+                >
+                  <div
+                    className="h-full rounded-full bg-foreground/40"
+                    style={{ width: `${usedPercent}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })}
+          {usage.todayUsage ? (
+            <p
+              className="text-[10px] text-muted-foreground"
+              title="Change in weekly usage since local midnight. ≥ indicates tracking started during the day."
+            >
+              {usage.todayUsage.coverage === "partial-day" ? "≥" : ""}
+              {Math.round(usage.todayUsage.usedPercent)}% today
+            </p>
+          ) : null}
+        </>
+      )}
+    </section>
+  );
 }
 
 const loadResetForecast = createResetForecastLoader();
 
 export function SidebarFooter() {
-  const [result, setResult] = useState<ResetForecastResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const pending = useRef(false);
+  const rpc = useRpc<typeof rpcContract>();
+  const [usage, setUsage] = useState<
+    Record<UsageProviderId, UsageResult | null>
+  >({ codex: null, "claude-code": null });
+  const [forecastResult, setForecastResult] =
+    useState<ResetForecastResult | null>(null);
+  const [loadingForecast, setLoadingForecast] = useState(false);
+  const pendingForecast = useRef(false);
+  const usageRefreshInFlight = useRef(false);
+  const legacyUsageSamples = useRef<UsageSample[] | null>(null);
   const mounted = useRef(false);
 
   const refreshForecast = useCallback(async () => {
-    if (pending.current) return;
-    pending.current = true;
-    setLoading(true);
+    if (pendingForecast.current) return;
+    pendingForecast.current = true;
+    setLoadingForecast(true);
     try {
       const next = await loadResetForecast();
-      if (mounted.current) setResult(next);
+      if (mounted.current) setForecastResult(next);
     } finally {
-      pending.current = false;
-      if (mounted.current) setLoading(false);
+      pendingForecast.current = false;
+      if (mounted.current) setLoadingForecast(false);
     }
   }, []);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const forecast = result?.status === "ok" ? result.forecast : null;
-  const label = loading
-    ? "Codex reset: checking…"
-    : forecast
-      ? formatResetForecast(forecast)
-      : "Codex reset: unavailable";
-
-  const rpc = useRpc<typeof rpcContract>();
-  const [usage, setUsage] = useState<CodexUsage | null>(null);
-  const usageRefreshInFlight = useRef(false);
-  const legacyUsageSamples = useRef<UsageSample[] | null>(null);
 
   const refresh = useCallback(async () => {
     if (usageRefreshInFlight.current) return;
@@ -98,38 +141,57 @@ export function SidebarFooter() {
         try {
           legacyUsageSamples.current = parseUsageSamples(
             window.localStorage.getItem(LEGACY_USAGE_SAMPLES_STORAGE_KEY),
-          ).slice(-MAX_LEGACY_USAGE_SAMPLES);
+          ).slice(-2_048);
         } catch {
           legacyUsageSamples.current = [];
         }
       }
-      const now = Date.now();
-      const result = await rpc.call("codex_usage", {
-        dayStartedAt: localDayStart(now),
-        ...(legacyUsageSamples.current.length === 0
-          ? {}
-          : { legacySamples: legacyUsageSamples.current }),
-      });
-      setUsage(result);
-      if (result.status === "ok") {
-        legacyUsageSamples.current = [];
-        try {
-          window.localStorage.removeItem(LEGACY_USAGE_SAMPLES_STORAGE_KEY);
-        } catch {
-          // The shared server history is authoritative even if legacy cleanup fails.
-        }
-      }
-    } catch {
-      setUsage({ status: "unavailable", message: "Codex usage unavailable" });
+      const samples = legacyUsageSamples.current;
+      const dayStartedAt = localDayStart(Date.now());
+      await Promise.all(
+        PROVIDERS.map(async ({ id, label }) => {
+          let result: UsageResult;
+          try {
+            result = await rpc.call("provider_usage", {
+              providerId: id,
+              dayStartedAt,
+              ...(id === "codex" && samples.length
+                ? { legacySamples: samples }
+                : {}),
+            });
+            if (id === "codex" && result.status === "ok") {
+              legacyUsageSamples.current = [];
+              try {
+                window.localStorage.removeItem(
+                  LEGACY_USAGE_SAMPLES_STORAGE_KEY,
+                );
+              } catch {
+                /* Server history is authoritative. */
+              }
+            }
+          } catch {
+            result = {
+              status: "unavailable",
+              message: `${label} usage unavailable`,
+            };
+          }
+          if (mounted.current)
+            setUsage((current) => ({ ...current, [id]: result }));
+        }),
+      );
     } finally {
       usageRefreshInFlight.current = false;
     }
   }, [rpc]);
 
   useEffect(() => {
+    mounted.current = true;
     void refresh();
     const timer = window.setInterval(() => void refresh(), 10 * 60_000);
-    return () => window.clearInterval(timer);
+    return () => {
+      mounted.current = false;
+      window.clearInterval(timer);
+    };
   }, [refresh]);
 
   useEffect(() => {
@@ -152,78 +214,50 @@ export function SidebarFooter() {
     };
   }, [refresh]);
 
-  const weeklyWindow =
-    usage?.status === "ok"
-      ? (usage.windows.find((window) => /week|7\s*d/i.test(window.label)) ??
-        usage.windows.at(-1) ??
-        null)
-      : null;
-
-  if (weeklyWindow === null) return null;
-
-  const usedPercent = Math.min(100, Math.max(0, weeklyWindow.usedPercent));
-  const todayUsage = usage?.status === "ok" ? usage.todayUsage : null;
-  const todayWidth =
-    todayUsage === null ? 0 : Math.min(usedPercent, todayUsage.usedPercent);
-  const reset = formatUsageReset(weeklyWindow.resetsAt);
-
+  const forecast =
+    forecastResult?.status === "ok" ? forecastResult.forecast : null;
   return (
-    <div className="shrink-0 space-y-1.5 px-3.5 py-2">
-      {(loading || result !== null) && (
-        <div
-          role="status"
-          title={
-            forecast
-              ? `Updated ${new Date(forecast.updated_at).toLocaleString()}`
-              : undefined
-          }
-          className="text-[10px] text-muted-foreground/80"
+    <div className="shrink-0 space-y-4 px-3.5 py-2">
+      {PROVIDERS.map(({ id, label }) => (
+        <ProviderUsageCard key={id} label={label} usage={usage[id]} />
+      ))}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          className="text-[10px] text-muted-foreground hover:text-foreground"
         >
-          {label}
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={() => void refreshForecast()}
-        disabled={loading}
-        aria-label="Fetch Codex reset forecast"
-        title="Click to fetch reset forecast"
-        className="block w-full space-y-0.5 text-left disabled:cursor-wait"
-      >
-        <div className="flex items-center justify-between text-[10px] text-muted-foreground/80">
-          <span className="truncate">Usage</span>
-          <span className="shrink-0 pl-2">
-            {todayUsage === null
-              ? "Today unavailable"
-              : `${todayUsage.coverage === "partial-day" ? "≥" : ""}${formatTodayUsage(todayUsage.usedPercent)}`}{" "}
-            • {Math.round(100 - usedPercent)}% left
-            {reset === null ? "" : ` • ${reset}`}
-          </span>
-        </div>
-        <div
-          role="progressbar"
-          aria-label={`${weeklyWindow.label} usage`}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(usedPercent)}
-          className="relative h-1 overflow-hidden rounded-full bg-muted"
+          Refresh usage
+        </button>
+      </div>
+      <div className="space-y-1 border-t border-border pt-2">
+        <button
+          type="button"
+          onClick={() => void refreshForecast()}
+          disabled={loadingForecast}
+          aria-label="Fetch Codex reset forecast"
+          className="text-[10px] text-muted-foreground hover:text-foreground disabled:cursor-wait"
         >
-          <div
-            className="h-full rounded-full bg-foreground/30"
-            style={{ width: `${usedPercent}%` }}
-          />
-          {todayUsage === null || todayWidth === 0 ? null : (
-            <div
-              className="absolute top-0 h-full bg-foreground/65"
-              style={{
-                left: `${usedPercent - todayWidth}%`,
-                width: `${todayWidth}%`,
-              }}
-              title={formatTodayUsage(todayWidth)}
-            />
-          )}
-        </div>
-      </button>
+          {loadingForecast
+            ? "Codex reset: checking…"
+            : "Fetch Codex reset forecast"}
+        </button>
+        {forecastResult ? (
+          <p
+            role="status"
+            title={
+              forecast
+                ? `Updated ${new Date(forecast.updated_at).toLocaleString()}`
+                : undefined
+            }
+            className="text-[10px] text-muted-foreground"
+          >
+            {forecast
+              ? formatResetForecast(forecast)
+              : "Codex reset: unavailable"}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
