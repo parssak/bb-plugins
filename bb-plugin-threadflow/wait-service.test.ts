@@ -532,21 +532,21 @@ test("instruction waits use a hidden Spark checker and do not expose wait tools 
   await state.harness.lifecycle.dispose();
 });
 
-test("instruction waits first check at twenty minutes and then every forty-five minutes", async () => {
+test("short instruction waits check within twenty seconds and recheck within one minute", async () => {
   const state = createWaitHost();
   state.setCheckerOutput('{"decision":"wait","evidence":"The dependency is still pending."}');
   const armedAt = Date.now();
   await state.harness.behavior.callAgentTool("threadflow_wait", {
     condition: { kind: "instruction", instruction: "The dependency is available." },
-    timeoutMinutes: 120,
+    timeoutMinutes: 25,
     resumePrompt: "Continue when the dependency is available.",
   }, { threadId: state.sleepingThread.id });
 
   const initial = state.bb.storage.database().prepare(
     "SELECT next_check_at FROM threadflow_waits WHERE thread_id = ?",
   ).get(state.sleepingThread.id);
-  assert.ok(initial.next_check_at >= armedAt + 20 * MINUTE_MS);
-  assert.ok(initial.next_check_at <= Date.now() + 20 * MINUTE_MS);
+  assert.ok(initial.next_check_at >= armedAt + 20_000);
+  assert.ok(initial.next_check_at <= Date.now() + 20_000);
 
   state.bb.storage.database().prepare(
     "UPDATE threadflow_waits SET next_check_at = 0 WHERE thread_id = ?",
@@ -557,7 +557,7 @@ test("instruction waits first check at twenty minutes and then every forty-five 
     const row = state.bb.storage.database().prepare(
       "SELECT next_check_at FROM threadflow_waits WHERE thread_id = ?",
     ).get(state.sleepingThread.id);
-    return row.next_check_at >= checkedAt + 45 * MINUTE_MS;
+    return row.next_check_at >= checkedAt + MINUTE_MS;
   }, "instruction wait was not rescheduled");
   service.controller.abort();
   await service.done;
@@ -565,7 +565,67 @@ test("instruction waits first check at twenty minutes and then every forty-five 
   const recheck = state.bb.storage.database().prepare(
     "SELECT next_check_at FROM threadflow_waits WHERE thread_id = ?",
   ).get(state.sleepingThread.id);
-  assert.ok(recheck.next_check_at <= Date.now() + 45 * MINUTE_MS);
+  assert.ok(recheck.next_check_at <= Date.now() + MINUTE_MS);
   assert.equal(state.harness.inspection.recheckCount, 0);
+  await state.harness.lifecycle.dispose();
+});
+
+
+test("reloading repairs legacy instruction schedules and a ready check releases the continuation", async () => {
+  const state = createWaitHost();
+  const result = await state.harness.behavior.callAgentTool("threadflow_wait", {
+    condition: { kind: "instruction", instruction: "The PR checks have finished." },
+    timeoutMinutes: 1,
+    resumePrompt: "Inspect the checks and merge if green.",
+  }, { threadId: state.sleepingThread.id });
+  assert.match(String(result), /Next condition check: /);
+  const db = state.bb.storage.database();
+  db.prepare("UPDATE threadflow_waits SET next_check_at = ?").run(Date.now() + 20 * MINUTE_MS);
+  const reloaded = await state.harness.lifecycle.reload((bb) => registerThreadflowWaits(bb));
+  const reloadedDb = reloaded.bb.storage.database();
+  const started = Date.now();
+  const service = reloaded.harness.behavior.runService("threadflow-wait-monitor");
+  await waitUntil(() => {
+    const row = reloadedDb.prepare("SELECT next_check_at, deadline_at FROM threadflow_waits").get();
+    return row.next_check_at <= Date.now() + 20_000 && row.next_check_at < row.deadline_at;
+  }, "legacy wait schedule was not repaired");
+  assert.equal(state.spawnedWith.length, 0);
+  const repaired = reloadedDb.prepare("SELECT next_check_at FROM threadflow_waits").get();
+  assert.ok(repaired.next_check_at >= started + 20_000);
+  service.controller.abort();
+  await service.done;
+
+  reloadedDb.prepare("UPDATE threadflow_waits SET next_check_at = 0").run();
+  const checking = reloaded.harness.behavior.runService("threadflow-wait-monitor");
+  await waitForRecheck(reloaded.harness);
+  checking.controller.abort();
+  await checking.done;
+  const row = reloadedDb.prepare("SELECT state, result_json FROM threadflow_waits").get();
+  assert.equal(row.state, "ready");
+  assert.equal(JSON.parse(row.result_json).outcome, "condition_met");
+  assert.equal(state.queuedRows[0].content[0].text, "Inspect the checks and merge if green.");
+  const hook = reloaded.harness.inspection.registrations.hooks["message.dispatch"];
+  assert.equal((await hook(dispatchContext(state.sleepingThread, state.queuedRows[0]))).action, "proceed");
+  await reloaded.harness.lifecycle.dispose();
+});
+
+test("long instruction waits spread remaining checks across the deadline", async () => {
+  const state = createWaitHost();
+  state.setCheckerOutput('{"decision":"wait","evidence":"Still pending."}');
+  await state.harness.behavior.callAgentTool("threadflow_wait", {
+    condition: { kind: "instruction", instruction: "The dependency is available." },
+    timeoutMinutes: 1_440,
+    resumePrompt: "Continue when ready.",
+  }, { threadId: state.sleepingThread.id });
+  const db = state.bb.storage.database();
+  db.prepare("UPDATE threadflow_waits SET next_check_at = 0").run();
+  const service = state.harness.behavior.runService("threadflow-wait-monitor");
+  await waitUntil(() => db.prepare("SELECT check_count, next_check_at FROM threadflow_waits").get().next_check_at > Date.now(), "long wait was not rescheduled");
+  service.controller.abort();
+  await service.done;
+  const row = db.prepare("SELECT * FROM threadflow_waits").get();
+  assert.equal(row.check_count, 1);
+  assert.ok(row.next_check_at > Date.now() + 20 * MINUTE_MS);
+  assert.ok(row.next_check_at < row.deadline_at);
   await state.harness.lifecycle.dispose();
 });

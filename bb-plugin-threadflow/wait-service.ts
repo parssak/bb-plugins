@@ -15,8 +15,8 @@ export const WAIT_CHECKER_TITLE_PREFIX = "Threadflow wait check:";
 const WAIT_MARKER_PREFIX = "THREADFLOW_WAIT_V1 ";
 const MONITOR_INTERVAL_MS = 2_000;
 const DIRECT_CHECK_INTERVAL_MS = 30_000;
-const INSTRUCTION_INITIAL_DELAY_MS = 20 * 60_000;
-const INSTRUCTION_RECHECK_INTERVAL_MS = 45 * 60_000;
+const INSTRUCTION_INITIAL_DELAY_MS = 20_000;
+const INSTRUCTION_RECHECK_INTERVAL_MS = 60_000;
 const MAX_INSTRUCTION_CHECKS = 64;
 const MAX_CONSECUTIVE_CHECK_ERRORS = 3;
 const WORKER_TIMEOUT_MS = 120_000;
@@ -203,6 +203,7 @@ type ArmWaitResult = {
   outcome: "armed";
   waitId: string;
   deadlineAt: number;
+  nextCheckAt: number | null;
   label: string;
 } | {
   outcome: "already_satisfied";
@@ -214,6 +215,7 @@ type ArmWaitResult = {
   outcome: "already_waiting";
   waitId: string;
   deadlineAt: number;
+  nextCheckAt: number | null;
   label: string;
 };
 
@@ -315,10 +317,13 @@ function formatToolResult(result: ArmWaitResult): string {
   if (result.outcome === "condition_impossible") {
     return `The wait condition cannot be satisfied: ${result.detail}\nContinue this turn and reassess the dependency.`;
   }
+  const nextCheck = result.nextCheckAt === null
+    ? "A condition check or release is in progress."
+    : `Next condition check: ${new Date(result.nextCheckAt).toISOString()}.`;
   if (result.outcome === "already_waiting") {
-    return `This thread is already sleeping on wait ${result.waitId}: ${result.label}. Deadline: ${new Date(result.deadlineAt).toISOString()}.\nEnd this turn now.`;
+    return `This thread is already sleeping on wait ${result.waitId}: ${result.label}. Deadline: ${new Date(result.deadlineAt).toISOString()}. ${nextCheck}\nEnd this turn now.`;
   }
-  return `Wait ${result.waitId} armed: ${result.label}. Deadline: ${new Date(result.deadlineAt).toISOString()}.\nEnd this turn now. Do not poll or continue working.`;
+  return `Wait ${result.waitId} armed: ${result.label}. Deadline: ${new Date(result.deadlineAt).toISOString()}. ${nextCheck}\nEnd this turn now. Do not poll or continue working.`;
 }
 
 export function registerThreadflowWaits(
@@ -610,6 +615,7 @@ export function registerThreadflowWaits(
         outcome: "already_waiting",
         waitId: existing.id,
         deadlineAt: existing.deadlineAt,
+        nextCheckAt: existing.nextCheckAt,
         label: existing.label,
       };
     }
@@ -653,6 +659,7 @@ export function registerThreadflowWaits(
           outcome: "already_waiting",
           waitId: raced.id,
           deadlineAt: raced.deadlineAt,
+          nextCheckAt: raced.nextCheckAt,
           label: raced.label,
         };
       }
@@ -688,7 +695,7 @@ export function registerThreadflowWaits(
       throw cause;
     }
 
-    return { outcome: "armed", waitId, deadlineAt, label: resolved.label };
+    return { outcome: "armed", waitId, deadlineAt, nextCheckAt, label: resolved.label };
   };
 
   const evaluateDirectWait = async (wait: WaitRecord, signal: AbortSignal): Promise<void> => {
@@ -899,6 +906,12 @@ export function registerThreadflowWaits(
     }
   };
 
+  // Keep short waits responsive without spending all checks early in a long wait.
+  const instructionRecheckDelay = (wait: WaitRecord, now: number): number => Math.max(
+    INSTRUCTION_RECHECK_INTERVAL_MS,
+    Math.ceil((wait.deadlineAt - now) / Math.max(1, MAX_INSTRUCTION_CHECKS - wait.checkCount)),
+  );
+
   const evaluateInstructionWait = async (wait: WaitRecord, signal: AbortSignal): Promise<void> => {
     if (wait.condition.kind !== "instruction") return;
     if (wait.checkCount >= MAX_INSTRUCTION_CHECKS) {
@@ -956,7 +969,7 @@ export function registerThreadflowWaits(
       });
       return;
     }
-    const nextCheckAt = Date.now() + INSTRUCTION_RECHECK_INTERVAL_MS;
+    const nextCheckAt = Date.now() + instructionRecheckDelay(current, Date.now());
     db.prepare(`UPDATE threadflow_waits
       SET next_check_at = ?, consecutive_errors = ?, last_evidence = ?, updated_at = ?
       WHERE id = ? AND state = 'waiting'`)
@@ -1139,6 +1152,14 @@ export function registerThreadflowWaits(
       try {
         await cleanupOrphanedWorkers();
         await recoverQueueState();
+        // Shorten schedules persisted by versions that waited 20/45 minutes.
+        // Preserve checks already due and leave in-flight checks to worker recovery.
+        const now = Date.now();
+        for (const wait of listWaits("state = 'waiting' AND condition_kind = 'instruction' AND next_check_at IS NOT NULL")) {
+          const delay = wait.checkCount === 0 ? INSTRUCTION_INITIAL_DELAY_MS : instructionRecheckDelay(wait, now);
+          db.prepare("UPDATE threadflow_waits SET next_check_at = MIN(next_check_at, ?), updated_at = ? WHERE id = ?")
+            .run(now + delay, now, wait.id);
+        }
       } catch (cause) {
         bb.log.warn(`Could not recover Threadflow waits: ${cause instanceof Error ? cause.message : String(cause)}`);
       }

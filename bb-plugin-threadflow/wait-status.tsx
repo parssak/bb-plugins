@@ -162,6 +162,13 @@ function ThreadWaitStatusCard({
             <div className="mt-2">
               <WaitConditionDetails wait={status.wait} />
             </div>
+            {!resuming && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                {status.wait.nextCheckAt === null
+                  ? "Checking condition…"
+                  : `Next check: ${formatWaitTimestamp(status.wait.nextCheckAt)}`}
+              </p>
+            )}
             {status.wait.lastEvidence === null ? null : (
               <p className="mt-2 rounded-md bg-background/40 px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
                 Last check: {status.wait.lastEvidence}
