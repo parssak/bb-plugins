@@ -21,7 +21,7 @@ const MAX_INSTRUCTION_CHECKS = 64;
 const MAX_CONSECUTIVE_CHECK_ERRORS = 3;
 const WORKER_TIMEOUT_MS = 120_000;
 const ARMING_RECOVERY_GRACE_MS = 30_000;
-const INSTRUCTION_CHECK_MODELS = ["gpt-5.3-codex-spark", "gpt-5.6-luna"] as const;
+const INSTRUCTION_CHECK_MODELS = ["gpt-6-luna", "gpt-5.6-luna"] as const;
 
 export const waitConditionSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -539,14 +539,9 @@ export function registerThreadflowWaits(
       attachQueuedMessage(wait.id, queuedRows[0]!.id);
       return getWait(wait.id);
     }
-    if (wait.state === "ready" || wait.state === "releasing") {
-      const now = Date.now();
-      db.prepare(`UPDATE threadflow_waits SET state = 'completed', updated_at = ?, completed_at = ?
-        WHERE id = ?`).run(now, now, wait.id);
-    } else {
-      markWaitCancelled(wait.id);
-    }
-    return null;
+    // List APIs hide rows claimed by BB while dispatch hooks run. Absence is
+    // not cancellation or successful delivery; only lifecycle events prove that.
+    return getActiveWaitForThread(threadId);
   };
 
   const prepareRelease = async (waitId: string): Promise<void> => {
@@ -554,12 +549,9 @@ export function registerThreadflowWaits(
     if (wait === null || wait.state !== "releasing" || wait.result === null) return;
     const queuedRows = await queueRowsForWait(wait);
     const queued = queuedRows[0];
-    if (queued === undefined) {
-      const now = Date.now();
-      db.prepare(`UPDATE threadflow_waits SET state = 'completed', updated_at = ?, completed_at = ?
-        WHERE id = ? AND state = 'releasing'`).run(now, now, wait.id);
-      return;
-    }
+    // A claimed continuation will reappear after the hook returns "wait".
+    // Keep the release durable and let the monitor retry its fenced update.
+    if (queued === undefined) return;
 
     const visibleText = wait.result.outcome === "condition_met" || wait.result.outcome === "resumed_manually"
       ? wait.resumePrompt
@@ -995,15 +987,8 @@ export function registerThreadflowWaits(
         if (wait.state === "ready") await bb.experimental_hooks.recheck("message.dispatch");
         continue;
       }
-      if (wait.state === "ready" || wait.state === "releasing") {
-        const now = Date.now();
-        db.prepare(`UPDATE threadflow_waits SET state = 'completed', updated_at = ?, completed_at = ?
-          WHERE id = ?`).run(now, now, wait.id);
-      } else if (wait.state === "arming" && Date.now() - wait.createdAt >= ARMING_RECOVERY_GRACE_MS) {
-        markWaitCancelled(wait.id);
-      } else if (wait.state === "waiting") {
-        markWaitCancelled(wait.id);
-      }
+      // Claimed rows are absent from this snapshot too. Await message.dispatched,
+      // message.cancelled or the sleeping thread's lifecycle event instead.
     }
   };
 
@@ -1070,6 +1055,13 @@ export function registerThreadflowWaits(
   bb.events.on("message.queued", ({ entry }) => {
     const marker = parseWaitMarker(entry.content);
     if (marker !== null) attachQueuedMessage(marker.waitId, entry.id);
+  });
+  bb.events.on("message.cancelled", ({ entry }) => {
+    const waitId = parseWaitMarker(entry.content)?.waitId;
+    const wait = waitId === undefined
+      ? listWaits("queued_message_id = ? LIMIT 1", entry.id)[0]
+      : getWait(waitId);
+    if (wait !== null && wait !== undefined && wait.threadId === entry.threadId) markWaitCancelled(wait.id);
   });
   bb.events.on("message.dispatched", ({ entry }) => {
     const wait = listWaits("queued_message_id = ? LIMIT 1", entry.id)[0];

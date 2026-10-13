@@ -392,7 +392,8 @@ test("reading an active wait clears stale state after its queued continuation is
   }, { threadId: state.sleepingThread.id });
   assert.equal((await state.waitController.getActiveWait(state.sleepingThread.id))?.state, "waiting");
 
-  state.queuedRows.splice(0);
+  const [entry] = state.queuedRows.splice(0);
+  await state.harness.behavior.emitThreadEvent("message.cancelled", { entry });
 
   assert.equal(await state.waitController.getActiveWait(state.sleepingThread.id), null);
   const row = state.bb.storage.database().prepare(
@@ -487,7 +488,7 @@ test("GitHub Actions waits wake on a terminal non-success conclusion", async () 
   await state.harness.lifecycle.dispose();
 });
 
-test("instruction waits use a hidden Spark checker and do not expose wait tools to helper agents", async () => {
+test("instruction waits use a hidden Luna checker and do not expose wait tools to helper agents", async () => {
   const state = createWaitHost();
   const normalConfig = await state.harness.behavior.resolveAgentConfiguration(
     makePluginAgentConfigurationContext(),
@@ -518,7 +519,7 @@ test("instruction waits use a hidden Spark checker and do not expose wait tools 
   await service.done;
 
   assert.equal(state.spawnedWith.length, 1);
-  assert.equal(state.spawnedWith[0].model, "gpt-5.3-codex-spark");
+  assert.equal(state.spawnedWith[0].model, "gpt-6-luna");
   assert.equal(state.spawnedWith[0].reasoningLevel, "low");
   assert.equal(state.spawnedWith[0].permissionMode, "auto");
   assert.equal(state.spawnedWith[0].visibility, "hidden");
@@ -627,5 +628,43 @@ test("long instruction waits spread remaining checks across the deadline", async
   assert.equal(row.check_count, 1);
   assert.ok(row.next_check_at > Date.now() + 20 * MINUTE_MS);
   assert.ok(row.next_check_at < row.deadline_at);
+  await state.harness.lifecycle.dispose();
+});
+
+
+test("a claimed continuation survives queue reads, recovery and release until dispatch completes", async () => {
+  const state = createWaitHost();
+  await state.harness.behavior.callAgentTool("threadflow_wait", {
+    condition: { kind: "thread_archived", targetThreadId: state.targetThread.id },
+    timeoutMinutes: 60,
+    resumePrompt: "Continue after the dependency finishes.",
+  }, { threadId: state.sleepingThread.id });
+  // BB omits claimed rows from both queue-list APIs during dispatch-hook evaluation.
+  const [claimed] = state.queuedRows.splice(0);
+  assert.equal((await state.waitController.getActiveWait(state.sleepingThread.id))?.state, "waiting");
+  const recovery = state.harness.behavior.runService("threadflow-wait-monitor");
+  await waitUntil(() => state.harness.inspection.sdk.callsTo("threads.queue.list").length > 0, "queue recovery did not run");
+  recovery.controller.abort();
+  await recovery.done;
+  assert.equal((await state.waitController.getActiveWait(state.sleepingThread.id))?.state, "waiting");
+
+  await state.harness.behavior.emitThreadEvent("thread.archived", {
+    thread: { ...state.targetThread, archivedAt: Date.now() },
+  });
+  assert.equal((await state.waitController.getActiveWait(state.sleepingThread.id))?.state, "releasing");
+  const hook = state.harness.inspection.registrations.hooks["message.dispatch"];
+  assert.equal((await hook(dispatchContext(state.sleepingThread, claimed))).action, "wait");
+  state.queuedRows.push(claimed);
+  const retry = state.harness.behavior.runService("threadflow-wait-monitor");
+  await waitForRecheck(state.harness);
+  retry.controller.abort();
+  await retry.done;
+  assert.equal((await state.waitController.getActiveWait(state.sleepingThread.id))?.state, "ready");
+
+  const [dispatching] = state.queuedRows.splice(0);
+  assert.equal((await state.waitController.getActiveWait(state.sleepingThread.id))?.state, "ready");
+  await state.harness.behavior.emitThreadEvent("message.dispatched", { entry: dispatching });
+  assert.equal(await state.waitController.getActiveWait(state.sleepingThread.id), null);
+  assert.equal(state.bb.storage.database().prepare("SELECT state FROM threadflow_waits").get().state, "completed");
   await state.harness.lifecycle.dispose();
 });
