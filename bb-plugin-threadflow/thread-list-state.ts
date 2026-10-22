@@ -1,29 +1,38 @@
-export type ThreadListStateInput = {
-  archived: boolean;
+export type ThreadTreeNode = {
   needsAttention: boolean;
-  queuedWork: "none" | "waiting" | "failed";
-  sideChats: readonly {
-    needsAttention: boolean;
-    running: boolean;
-  }[];
   status: string;
+  /** Background agents and workflows still running for the thread. */
+  backgroundWork: number;
+  children: readonly ThreadTreeNode[];
+};
+
+export type ThreadListStateInput = ThreadTreeNode & {
+  archived: boolean;
+  queuedWork: "none" | "waiting" | "failed";
 };
 
 export type ThreadListState = "needs-you" | "waiting" | "working";
 
 const ACTIVE_STATUSES = new Set(["active", "starting", "stopping"]);
 
+export function threadIsRunning(thread: Pick<ThreadTreeNode, "status" | "backgroundWork">): boolean {
+  return ACTIVE_STATUSES.has(thread.status) || thread.backgroundWork > 0;
+}
+
+export function threadTreeNeedsAttention(thread: ThreadTreeNode): boolean {
+  return thread.needsAttention || thread.children.some(threadTreeNeedsAttention);
+}
+
+/** A thread is working while it or any nested child thread still runs. */
+export function threadTreeIsWorking(thread: ThreadTreeNode): boolean {
+  return threadIsRunning(thread) || thread.children.some(threadTreeIsWorking);
+}
+
 export function classifyThreadListState(thread: ThreadListStateInput): ThreadListState {
-  if (thread.needsAttention || thread.sideChats.some((sideChat) => sideChat.needsAttention)) return "needs-you";
-  const sideChatInProgress = thread.sideChats.some((sideChat) => (
-    sideChat.running && !sideChat.needsAttention
-  ));
-  if (!thread.archived && (sideChatInProgress || !thread.needsAttention && ACTIVE_STATUSES.has(thread.status))) {
-    return "working";
-  }
+  if (threadTreeNeedsAttention(thread)) return "needs-you";
+  if (!thread.archived && threadTreeIsWorking(thread)) return "working";
   if (
     !thread.archived
-    && !thread.needsAttention
     && thread.status !== "error"
     && thread.queuedWork === "waiting"
   ) {

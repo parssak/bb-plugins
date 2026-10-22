@@ -6,7 +6,31 @@ import {
   useRealtimeConnectionState,
   useRpc,
 } from "@get-bb/plugin-sdk/app";
-import type { NativeThread, rpcContract } from "../contract";
+import type {
+  HiddenChildThread,
+  NativeChildThread,
+  NativeThread,
+  rpcContract,
+} from "../contract";
+import { threadIsRunning } from "../thread-list-state";
+
+/** Background agent counts change without a thread event, so poll while they run. */
+const HIDDEN_CHILD_POLL_MS = 15_000;
+
+const SIDE_CHAT_PLUGIN_IDS = ["threadflow", "chat-tools"];
+
+type ChildThreadSource = Omit<NativeChildThread, "children">;
+
+function isOwnedSideChat(thread: {
+  originKind: "fork" | null;
+  originPluginId: string | null;
+}): boolean {
+  return (
+    thread.originKind === "fork" &&
+    SIDE_CHAT_PLUGIN_IDS.includes(thread.originPluginId ?? "")
+  );
+}
+
 export function useThreadflowThreads(scope: "recent" | "all") {
   const native = experimental_useSidebarThreads({
     experimental_lifecycles: scope === "all" ? ["archived"] : ["active"],
@@ -20,7 +44,10 @@ export function useThreadflowThreads(scope: "recent" | "all") {
   const [scheduledSends, setScheduledSends] = useState<Record<string, number>>(
     {},
   );
-  const refresh = useCallback(async () => {
+  const [hiddenChildren, setHiddenChildren] = useState<
+    readonly HiddenChildThread[]
+  >([]);
+  const refreshWaits = useCallback(async () => {
     try {
       const result = await rpc.call("wait_dependencies", {});
       setScheduledSends(
@@ -42,35 +69,84 @@ export function useThreadflowThreads(scope: "recent" | "all") {
       /* Preserve the last dependency snapshot while reconnecting. */
     }
   }, [rpc]);
+  const refreshHiddenChildren = useCallback(async () => {
+    try {
+      const result = await rpc.call("hidden_child_threads", {});
+      setHiddenChildren(result.threads);
+    } catch {
+      /* Preserve the last child snapshot while reconnecting. */
+    }
+  }, [rpc]);
+  const refresh = useCallback(async () => {
+    await Promise.all([refreshWaits(), refreshHiddenChildren()]);
+  }, [refreshHiddenChildren, refreshWaits]);
   useEffect(() => {
     if (scope === "recent") void refresh();
   }, [refresh, scope, connection]);
   useRealtime("threads-changed", () => {
     if (scope === "recent") void refresh();
   });
+  const hiddenChildWorkRunning = hiddenChildren.some(threadIsRunning);
+  useEffect(() => {
+    if (scope !== "recent" || !hiddenChildWorkRunning) return;
+    const timer = window.setInterval(
+      () => void refreshHiddenChildren(),
+      HIDDEN_CHILD_POLL_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [hiddenChildWorkRunning, refreshHiddenChildren, scope]);
   const threads = useMemo<NativeThread[]>(() => {
     const projects = new Map(native.projects.map((p) => [p.id, p.name]));
     const providerNames = new Map(providers.map((p) => [p.id, p.displayName]));
-    const children = new Map<string, NativeThread["sideChats"]>();
+    const childSources = new Map<string, ChildThreadSource>();
     for (const thread of native.threads) {
       if (!thread.parentThreadId || thread.isArchived) continue;
-      const list = children.get(thread.parentThreadId) ?? [];
-      const owned =
-        thread.isHidden &&
-        thread.originKind === "fork" &&
-        ["threadflow", "chat-tools"].includes(thread.originPluginId ?? "");
-      list.push({
+      const owned = thread.isHidden && isOwnedSideChat(thread);
+      childSources.set(thread.id, {
         id: thread.id,
         title: thread.displayTitle || thread.title || "Side chat",
-        sourceThreadId: thread.parentThreadId,
+        parentThreadId: thread.parentThreadId,
         createdAt: thread.createdAt,
+        status: thread.runtimeStatus,
         needsAttention: thread.hasPendingInteraction,
-        running: !["idle", "error"].includes(thread.runtimeStatus),
+        backgroundWork:
+          thread.activity.backgroundAgents + thread.activity.workflows,
         closeable: owned,
         navigation: owned ? "thread" : "split",
       });
-      children.set(thread.parentThreadId, list);
     }
+    for (const thread of hiddenChildren) {
+      if (childSources.has(thread.id)) continue;
+      const owned = isOwnedSideChat(thread);
+      childSources.set(thread.id, {
+        id: thread.id,
+        title: thread.title,
+        parentThreadId: thread.parentThreadId,
+        createdAt: thread.createdAt,
+        status: thread.status,
+        needsAttention: thread.needsAttention,
+        backgroundWork: thread.backgroundWork,
+        closeable: owned,
+        navigation: owned ? "thread" : "split",
+      });
+    }
+    const childrenByParentId = new Map<string, ChildThreadSource[]>();
+    for (const child of childSources.values()) {
+      const siblings = childrenByParentId.get(child.parentThreadId) ?? [];
+      siblings.push(child);
+      childrenByParentId.set(child.parentThreadId, siblings);
+    }
+    const buildChildren = (
+      parentThreadId: string,
+      visited: Set<string>,
+    ): NativeChildThread[] =>
+      (childrenByParentId.get(parentThreadId) ?? [])
+        .filter((child) => !visited.has(child.id))
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map((child) => {
+          visited.add(child.id);
+          return { ...child, children: buildChildren(child.id, visited) };
+        });
     return native.threads
       .filter((t) => !t.parentThreadId && !t.isHidden)
       .map((t) => ({
@@ -93,8 +169,8 @@ export function useThreadflowThreads(scope: "recent" | "all") {
             : null,
         waitingForThreadIds: dependencies[t.id] ?? [],
         status: t.runtimeStatus,
-        sideChats:
-          children.get(t.id)?.sort((a, b) => a.createdAt - b.createdAt) ?? [],
+        backgroundWork: t.activity.backgroundAgents + t.activity.workflows,
+        children: buildChildren(t.id, new Set([t.id])),
       }));
   }, [
     native.threads,
@@ -102,6 +178,7 @@ export function useThreadflowThreads(scope: "recent" | "all") {
     providers,
     dependencies,
     scheduledSends,
+    hiddenChildren,
   ]);
   return {
     threads,

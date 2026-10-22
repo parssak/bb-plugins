@@ -23,7 +23,13 @@ function thread(
     runtimeStatus: "idle",
     queuedWork: "none",
     hasPendingInteraction: false,
-    activity: { backgroundCommands: 0 },
+    activity: {
+      workflows: 0,
+      backgroundAgents: 0,
+      backgroundCommands: 0,
+      planMode: 0,
+      goals: 0,
+    },
     indicator: "none",
     indicatorLabel: null,
     isUnread: false,
@@ -116,7 +122,7 @@ test("declared wait dependencies nest beneath their parent using host state", as
   );
   await waitFor(() =>
     expect(
-      slot.getByRole("link", { name: "child" }).closest(".border-l"),
+      slot.getByRole("link", { name: "child" }).closest("[data-threadflow-children]"),
     ).toBeTruthy(),
   );
   expect(slot.getAllByRole("link", { name: "child" })).toHaveLength(1);
@@ -191,9 +197,85 @@ test("canonical child threads nest once and hidden worker roots stay out of the 
   );
   for (const id of ["child", "legacy-review"]) {
     const row = await slot.findByRole("link", { name: id });
-    expect(row.closest(".border-l")).toBeTruthy();
+    expect(row.closest("[data-threadflow-children]")).toBeTruthy();
     expect(slot.getAllByRole("link", { name: id })).toHaveLength(1);
   }
   expect(slot.queryByRole("link", { name: "worker" })).toBeNull();
+  slot.lifecycle.unmount();
+});
+
+test("hidden reviews nest under their thread and keep it working while they run", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const slot = renderSlot(
+    app.threadLists[0]!,
+    {
+      activeThreadId: null,
+      activeProjectId: null,
+      isCompactViewport: false,
+      onNavigate: () => {},
+      searchQuery: "",
+    },
+    {
+      sidebarThreads: { threads: [thread("parent")], projects: [] },
+      sidebarPullRequests: {
+        parent: {
+          experimental_autoMerge: false,
+          experimental_inMergeQueue: null,
+          experimental_checks: { state: "passing" },
+          experimental_review: { state: "none" },
+          experimental_mergeability: { state: "mergeable" },
+          number: 7,
+          title: "Parent",
+          url: "https://github.com/example/repo/pull/7",
+          state: "open",
+          attention: "none",
+        },
+      },
+      rpc: {
+        wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }),
+        hidden_child_threads: () => ({
+          threads: [
+            {
+              id: "review",
+              title: "Review",
+              parentThreadId: "parent",
+              createdAt: 2,
+              status: "idle",
+              needsAttention: false,
+              backgroundWork: 2,
+              originKind: "fork",
+              originPluginId: "chat-tools",
+            },
+            {
+              id: "reply",
+              title: "Reply",
+              parentThreadId: "review",
+              createdAt: 3,
+              status: "active",
+              needsAttention: false,
+              backgroundWork: 0,
+              originKind: "fork",
+              originPluginId: "side-chat",
+            },
+          ],
+        }),
+      },
+    },
+  );
+  const review = await slot.findByRole("link", { name: "Review" });
+  const reply = slot.getByRole("link", { name: "Reply" });
+  const parentRow = slot.getByRole("link", { name: "parent" }).parentElement!
+    .parentElement!;
+  expect(parentRow.contains(review)).toBe(true);
+  expect(review.closest("[data-threadflow-children]")?.contains(reply)).toBe(true);
+  expect(review.closest("[data-threadflow-children]")).not.toBe(reply.closest("[data-threadflow-children]"));
+  expect(slot.getByRole("img", { name: "2 background agents running" }))
+    .toBeTruthy();
+  expect(slot.getAllByRole("img", { name: "Working" })).toHaveLength(2);
+  expect(parentRow.closest("section")?.textContent).toMatch(/^working/);
+  fireEvent.click(review);
+  expect(slot.inspection.navigateCalls).toContainEqual(
+    expect.objectContaining({ method: "toThread", threadId: "review" }),
+  );
   slot.lifecycle.unmount();
 });

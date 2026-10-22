@@ -51,6 +51,94 @@ test("wait metadata reports scheduled sends without fetching thread snapshots", 
   await harness.lifecycle.dispose();
 });
 
+test("hidden review threads and their side chats report their owning thread", async () => {
+  const listEntry = (
+    overrides: Parameters<typeof makeThreadResponse>[0],
+    activeBackgroundAgentCount = 0,
+  ) => ({
+    ...makeThreadResponse(overrides),
+    hasPendingInteraction: false,
+    activity: {
+      activeBackgroundAgentCount,
+      activeBackgroundCommandCount: 0,
+      activeGoalCount: 0,
+      activePlanModeCount: 0,
+      activeWorkflowCount: 0,
+    },
+  });
+  const review = listEntry(
+    {
+      id: "review",
+      title: "Review",
+      parentThreadId: "parent",
+      sourceThreadId: "parent",
+      originKind: "fork",
+      originPluginId: "chat-tools",
+      visibility: "hidden",
+      status: "idle",
+      createdAt: 2,
+    },
+    2,
+  );
+  const reply = listEntry({
+    id: "reply",
+    titleFallback: "Replying to this earlier message",
+    lifecycleOwnerThreadId: "review",
+    sourceThreadId: "review",
+    originKind: "fork",
+    originPluginId: "side-chat",
+    visibility: "hidden",
+    status: "active",
+    runtime: { displayStatus: "active" },
+    createdAt: 3,
+  });
+  const visibleChild = listEntry({ id: "visible", parentThreadId: "parent" });
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "threadflow-hidden-children-test",
+    sdk: {
+      threads: {
+        list: async ({ archived, includeHidden, hasParent, originKind }) => {
+          if (archived !== false || includeHidden !== true) return [];
+          if (hasParent === true) return [review, visibleChild];
+          return originKind === "fork" ? [review, reply] : [];
+        },
+      },
+    },
+  });
+  plugin(bb);
+
+  assert.deepEqual(
+    await harness.behavior.callRpc("hidden_child_threads", {}),
+    {
+      threads: [
+        {
+          id: "review",
+          title: "Review",
+          parentThreadId: "parent",
+          createdAt: 2,
+          status: "idle",
+          needsAttention: false,
+          backgroundWork: 2,
+          originKind: "fork",
+          originPluginId: "chat-tools",
+        },
+        {
+          id: "reply",
+          title: "Replying to this earlier message",
+          parentThreadId: "review",
+          createdAt: 3,
+          status: "active",
+          needsAttention: false,
+          backgroundWork: 0,
+          originKind: "fork",
+          originPluginId: "side-chat",
+        },
+      ],
+    },
+  );
+  await harness.lifecycle.dispose();
+});
+
 test("thread history exposes archive time and can restore a thread", async () => {
   const archivedAt = Date.now() - 1_000;
   const archivedThread = {

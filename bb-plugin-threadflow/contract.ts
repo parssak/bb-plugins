@@ -4,16 +4,19 @@ import { activeThreadflowWaitSchema } from "./wait-service.ts";
 
 const MAX_WORKOUT_SCRATCHPAD_LENGTH = 4_000;
 
-const sideChatSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  sourceThreadId: z.string(),
-  createdAt: z.number(),
-  needsAttention: z.boolean(),
-  running: z.boolean(),
-  closeable: z.boolean(),
-  navigation: z.enum(["thread", "split"]),
-});
+const hiddenChildThreadSchema = z
+  .object({
+    id: z.string(),
+    title: z.string(),
+    parentThreadId: z.string(),
+    createdAt: z.number(),
+    status: z.string(),
+    needsAttention: z.boolean(),
+    backgroundWork: z.number(),
+    originKind: z.enum(["fork"]).nullable(),
+    originPluginId: z.string().nullable(),
+  })
+  .strict();
 
 const queuedThreadWaitSchema = z
   .object({
@@ -35,23 +38,38 @@ const queuedThreadWaitSchema = z
   })
   .strict();
 
-const nativeThreadSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  projectId: z.string(),
-  project: z.string(),
-  provider: z.string(),
-  createdAt: z.number(),
-  updatedAt: z.number(),
-  archivedAt: z.number().nullable(),
-  archived: z.boolean(),
-  needsAttention: z.boolean(),
-  queuedWork: z.enum(["none", "waiting", "failed"]),
-  scheduledSendAt: z.number().nullable(),
-  waitingForThreadIds: z.array(z.string()),
-  status: z.string(),
-  sideChats: z.array(sideChatSchema),
-});
+export type NativeChildThread = {
+  id: string;
+  title: string;
+  parentThreadId: string;
+  createdAt: number;
+  status: string;
+  needsAttention: boolean;
+  /** Background agents and workflows still running for this thread. */
+  backgroundWork: number;
+  closeable: boolean;
+  navigation: "thread" | "split";
+  children: NativeChildThread[];
+};
+
+export type NativeThread = {
+  id: string;
+  title: string;
+  projectId: string;
+  project: string;
+  provider: string;
+  createdAt: number;
+  updatedAt: number;
+  archivedAt: number | null;
+  archived: boolean;
+  needsAttention: boolean;
+  queuedWork: "none" | "waiting" | "failed";
+  scheduledSendAt: number | null;
+  waitingForThreadIds: string[];
+  status: string;
+  backgroundWork: number;
+  children: NativeChildThread[];
+};
 
 export const rpcContract = defineRpcContract({
   wait_dependencies: {
@@ -92,6 +110,12 @@ export const rpcContract = defineRpcContract({
       .strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
   },
+  hidden_child_threads: {
+    input: z.object({}).strict(),
+    output: z
+      .object({ threads: z.array(hiddenChildThreadSchema) })
+      .strict(),
+  },
   close_side_chat: {
     input: z.object({ threadId: z.string().min(1).max(100) }).strict(),
     output: z.object({ ok: z.literal(true) }).strict(),
@@ -107,6 +131,5 @@ export const rpcContract = defineRpcContract({
   },
 });
 
-export type NativeThread = z.infer<typeof nativeThreadSchema>;
-export type NativeSideChat = z.infer<typeof sideChatSchema>;
+export type HiddenChildThread = z.infer<typeof hiddenChildThreadSchema>;
 export type QueuedThreadWait = z.infer<typeof queuedThreadWaitSchema>;

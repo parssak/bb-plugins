@@ -2,7 +2,9 @@
 
 A compact thread list for BB: Needs you, Snoozed, In review, and Working; nested child threads and wait dependencies; PR badges; archive history; drag to split; and keyboard focus controls.
 
-Threadflow reads BB's live thread cache and host navigation APIs. It owns durable waits, the completion alert, and the focus scratchpad. Its backend returns only wait and scheduled-send metadata for the list. Archived threads use BB's paginated archive cache.
+Review and side-chat threads that BB hides from its own list nest under the thread that owns them, and a thread stays in Working while any nested thread or background agent is still running.
+
+Threadflow reads BB's live thread cache and host navigation APIs. It owns durable waits, the completion alert, and the focus scratchpad. Its backend returns wait, scheduled-send, and hidden child-thread metadata for the list, because BB's sidebar cache omits hidden threads. Archived threads use BB's paginated archive cache.
 
 Journal, Chat tools, and Usage insights are independent sibling packages. Journal has its own rail entry. Review and TLDR shortcuts invoke Chat tools through BB's public RPC API; the thread list and waits work without it.
 

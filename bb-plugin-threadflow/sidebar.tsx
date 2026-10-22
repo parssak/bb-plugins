@@ -25,7 +25,11 @@ import type {
   PluginSidebarPullRequest,
   PluginThreadListProps,
 } from "@get-bb/plugin-sdk/app";
-import type { NativeSideChat, NativeThread, rpcContract } from "./contract";
+import type {
+  NativeChildThread,
+  NativeThread,
+  rpcContract,
+} from "./contract";
 import { useThreadflowThreads } from "./hooks/use-threadflow-threads";
 import { ArchiveThreadButton } from "./archive-controls";
 import { toast } from "sonner";
@@ -45,6 +49,8 @@ import {
 import {
   classifyThreadListState,
   nestWorkingThreadDependencies,
+  threadTreeIsWorking,
+  threadTreeNeedsAttention,
 } from "./thread-list-state";
 import { formatJournalDayGroup } from "./journal-date";
 import {
@@ -344,6 +350,177 @@ function BackgroundCommandIndicator({ count }: { count: number }) {
   );
 }
 
+function BackgroundWorkBadge({ count }: { count: number }) {
+  if (count === 0) return null;
+  const label = `${count} background ${count === 1 ? "agent" : "agents"} running`;
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className="flex shrink-0 items-center gap-0.5 font-mono text-[9px] leading-none text-muted-foreground"
+    >
+      <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" className="size-3">
+        <rect
+          x="3"
+          y="5"
+          width="10"
+          height="8"
+          rx="2"
+          stroke="currentColor"
+          strokeWidth="1.3"
+        />
+        <path
+          d="M8 5V3M6 9h.01M10 9h.01"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+      {count}
+    </span>
+  );
+}
+
+function ChildThreadStatus({ thread }: { thread: NativeChildThread }) {
+  const status = threadTreeNeedsAttention(thread)
+    ? "attention"
+    : threadTreeIsWorking(thread)
+      ? "working"
+      : "idle";
+  return (
+    <span className="flex size-2.5 shrink-0 items-center justify-center">
+      {status === "attention" ? (
+        <span
+          role="img"
+          aria-label="Needs your input"
+          title="Needs your input"
+          className="size-1.5 rounded-full bg-amber-500"
+        />
+      ) : status === "working" ? (
+        <span
+          role="img"
+          aria-label="Working"
+          title="Working"
+          className="size-2.5 animate-spin rounded-full border border-muted-foreground/30 border-t-foreground"
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function flattenChildThreads(
+  threads: readonly NativeChildThread[],
+): NativeChildThread[] {
+  return threads.flatMap((thread) => [
+    thread,
+    ...flattenChildThreads(thread.children),
+  ]);
+}
+
+function ChildThreadRows({
+  threads,
+  selectedThreadId,
+  onOpen,
+  onClose,
+}: {
+  threads: readonly NativeChildThread[];
+  selectedThreadId: string | null;
+  onOpen: (thread: NativeChildThread) => void;
+  onClose: (thread: NativeChildThread) => Promise<void>;
+}) {
+  return (
+    <div data-threadflow-children className="mt-0.5 space-y-0.5 pl-2">
+      {threads.map((child) => (
+        <div key={child.id}>
+          <div
+            className={
+              selectedThreadId === child.id
+                ? "flex w-full items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-left text-[10px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+                : "flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-left text-[10px] text-muted-foreground outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+            }
+          >
+            <a
+              href={`/threads/${encodeURIComponent(child.id)}`}
+              aria-label={child.title}
+              data-threadflow-row
+              data-thread-id={child.id}
+              data-side-chat-id={child.id}
+              data-source-thread-id={child.parentThreadId}
+              onClick={(event) => {
+                if (
+                  event.metaKey ||
+                  event.ctrlKey ||
+                  event.shiftKey ||
+                  event.altKey
+                )
+                  return;
+                event.preventDefault();
+                event.stopPropagation();
+                onOpen(child);
+              }}
+              className="flex min-w-0 flex-1 items-center gap-1 text-left outline-none"
+            >
+              <ChildThreadStatus thread={child} />
+              <span
+                draggable
+                title="Drag into Journal"
+                className="flex min-w-0 flex-1 cursor-grab select-none items-center gap-1 active:cursor-grabbing"
+                onDragStart={(event) => {
+                  event.stopPropagation();
+                  setThreadReferenceDragData(
+                    event.dataTransfer,
+                    child.id,
+                    child.title,
+                  );
+                }}
+              >
+                <ThreadTitleContent title={child.title} />
+              </span>
+              <BackgroundWorkBadge count={child.backgroundWork} />
+            </a>
+            {child.closeable ? (
+              <button
+                type="button"
+                aria-label={`Close ${child.title}`}
+                title="Close side chat"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void onClose(child);
+                }}
+                className="shrink-0 rounded p-0.5 opacity-40 hover:bg-background hover:opacity-100"
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  className="size-3"
+                >
+                  <path
+                    d="m4 4 8 8m0-8-8 8"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            ) : null}
+          </div>
+          {child.children.length === 0 ? null : (
+            <ChildThreadRows
+              threads={child.children}
+              selectedThreadId={selectedThreadId}
+              onOpen={onOpen}
+              onClose={onClose}
+            />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ThreadBrandMark({
   brand,
   className = "size-3",
@@ -422,8 +599,8 @@ function SidebarThreadRow({
   showShortcutNumber,
   selectedThreadId,
   onOpen,
-  onOpenSideChat,
-  onCloseSideChat,
+  onOpenChild,
+  onCloseChild,
   onRename,
   showWorkingDuration,
 }: {
@@ -434,8 +611,8 @@ function SidebarThreadRow({
   showShortcutNumber: boolean;
   selectedThreadId: string | null;
   onOpen: (thread: NativeThread) => void;
-  onOpenSideChat: (sideChat: NativeSideChat) => void;
-  onCloseSideChat: (sideChat: NativeSideChat) => Promise<void>;
+  onOpenChild: (child: NativeChildThread) => void;
+  onCloseChild: (child: NativeChildThread) => Promise<void>;
   onRename: (thread: NativeThread, title: string) => Promise<void>;
   showWorkingDuration: boolean;
 }) {
@@ -445,7 +622,9 @@ function SidebarThreadRow({
   const [saving, setSaving] = useState(false);
   const selected =
     selectedThreadId === thread.id ||
-    thread.sideChats.some((sideChat) => sideChat.id === selectedThreadId);
+    flattenChildThreads(thread.children).some(
+      (child) => child.id === selectedThreadId,
+    );
 
   useEffect(() => {
     if (!editing) setDraft(thread.title);
@@ -507,6 +686,7 @@ function SidebarThreadRow({
             </kbd>
           ) : null}
           <BackgroundCommandIndicator count={backgroundCommands} />
+          <BackgroundWorkBadge count={thread.backgroundWork} />
           <span
             draggable
             title="Drag into Journal"
@@ -548,85 +728,14 @@ function SidebarThreadRow({
         )}
         <ArchiveThreadButton threadId={thread.id} title={thread.title} />
       </div>
-      {thread.sideChats.length > 0 ? (
-        <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border/60 pl-1.5">
-          {thread.sideChats.map((sideChat) => (
-            <div
-              key={sideChat.id}
-              className={
-                selectedThreadId === sideChat.id
-                  ? "flex w-full items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-left text-[10px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
-                  : "flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-left text-[10px] text-muted-foreground outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
-              }
-            >
-              <a
-                href={`/threads/${encodeURIComponent(sideChat.id)}`}
-                aria-label={sideChat.title}
-                data-threadflow-row
-                data-thread-id={sideChat.id}
-                data-side-chat-id={sideChat.id}
-                data-source-thread-id={sideChat.sourceThreadId}
-                onClick={(event) => {
-                  if (
-                    event.metaKey ||
-                    event.ctrlKey ||
-                    event.shiftKey ||
-                    event.altKey
-                  )
-                    return;
-                  event.preventDefault();
-                  event.stopPropagation();
-                  onOpenSideChat(sideChat);
-                }}
-                className="flex min-w-0 flex-1 items-center gap-1 text-left outline-none"
-              >
-                <span
-                  draggable
-                  title="Drag into Journal"
-                  className="flex min-w-0 flex-1 cursor-grab select-none items-center gap-1 active:cursor-grabbing"
-                  onDragStart={(event) => {
-                    event.stopPropagation();
-                    setThreadReferenceDragData(
-                      event.dataTransfer,
-                      sideChat.id,
-                      sideChat.title,
-                    );
-                  }}
-                >
-                  <ThreadTitleContent title={sideChat.title} />
-                </span>
-              </a>
-              {sideChat.closeable ? (
-                <button
-                  type="button"
-                  aria-label={`Close ${sideChat.title}`}
-                  title="Close side chat"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void onCloseSideChat(sideChat);
-                  }}
-                  className="shrink-0 rounded p-0.5 opacity-40 hover:bg-background hover:opacity-100"
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    className="size-3"
-                  >
-                    <path
-                      d="m4 4 8 8m0-8-8 8"
-                      stroke="currentColor"
-                      strokeWidth="1.4"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
+      {thread.children.length === 0 ? null : (
+        <ChildThreadRows
+          threads={thread.children}
+          selectedThreadId={selectedThreadId}
+          onOpen={onOpenChild}
+          onClose={onCloseChild}
+        />
+      )}
       <Dialog
         open={editing}
         onOpenChange={(open) => {
@@ -978,32 +1087,32 @@ function ActiveThreadList({
     [actions, focusSidebarRow, onNavigate],
   );
 
-  const openSideChat = useCallback(
-    (sideChat: NativeSideChat, keepSidebarFocus = false) => {
+  const openChildThread = useCallback(
+    (child: NativeChildThread, keepSidebarFocus = false) => {
       keepSidebarFocusRef.current = keepSidebarFocus;
       setKeyboardFocusMode(keepSidebarFocus ? "sidebar" : "chat");
-      setSelectedThreadId(sideChat.id);
-      if (sideChat.navigation === "thread") {
-        navigate.toThread(sideChat.id);
+      setSelectedThreadId(child.id);
+      if (child.navigation === "thread") {
+        navigate.toThread(child.id);
       } else {
-        actions.open(sideChat.id, { split: true });
+        actions.open(child.id, { split: true });
       }
       onNavigate();
       if (keepSidebarFocus)
-        window.requestAnimationFrame(() => focusSidebarRow(sideChat.id));
+        window.requestAnimationFrame(() => focusSidebarRow(child.id));
     },
     [actions, focusSidebarRow, navigate, onNavigate],
   );
 
   const openSidebarTarget = useCallback(
     (threadId: string, keepSidebarFocus = false) => {
-      const sideChat = threads
-        .flatMap((thread) => thread.sideChats)
+      const child = threads
+        .flatMap((thread) => flattenChildThreads(thread.children))
         .find((candidate) => candidate.id === threadId);
-      if (sideChat !== undefined) openSideChat(sideChat, keepSidebarFocus);
+      if (child !== undefined) openChildThread(child, keepSidebarFocus);
       else openThread(threadId, keepSidebarFocus);
     },
-    [openSideChat, openThread, threads],
+    [openChildThread, openThread, threads],
   );
 
   const renameThread = useCallback(
@@ -1020,11 +1129,11 @@ function ActiveThreadList({
     [actions, refresh],
   );
 
-  const closeSideChat = useCallback(
-    async (sideChat: NativeSideChat) => {
+  const closeChildThread = useCallback(
+    async (child: NativeChildThread) => {
       try {
-        await rpc.call("close_side_chat", { threadId: sideChat.id });
-        setSelectedThreadId(sideChat.sourceThreadId);
+        await rpc.call("close_side_chat", { threadId: child.id });
+        setSelectedThreadId(child.parentThreadId);
         await refresh();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -1222,8 +1331,8 @@ function ActiveThreadList({
       showShortcutNumber={showShortcutNumbers}
       selectedThreadId={selectedThreadId}
       onOpen={(candidate) => openThread(candidate.id)}
-      onOpenSideChat={(sideChat) => openSideChat(sideChat)}
-      onCloseSideChat={closeSideChat}
+      onOpenChild={(child) => openChildThread(child)}
+      onCloseChild={closeChildThread}
       onRename={renameThread}
       showWorkingDuration={showWorkingDuration}
     />
@@ -1296,7 +1405,7 @@ function ActiveThreadList({
                         <div key={thread.id}>
                           {renderThreadRow(thread, title === "Working")}
                           {dependencies.length === 0 ? null : (
-                            <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border/60 pl-1.5">
+                            <div data-threadflow-children className="mt-0.5 space-y-0.5 pl-2">
                               {dependencies.map((dependency) =>
                                 renderThreadRow(dependency, true),
                               )}

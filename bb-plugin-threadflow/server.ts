@@ -1,5 +1,5 @@
 import { legacyStorageContract, ownsLegacyKey } from "./legacy-storage.ts";
-import { rpcContract } from "./contract.ts";
+import { rpcContract, type HiddenChildThread } from "./contract.ts";
 import { spawn } from "node:child_process";
 import { type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
@@ -356,6 +356,48 @@ export default function plugin(bb: BbPluginApi) {
             : [],
         ),
       };
+    },
+
+    // BB's sidebar cache omits hidden threads, so review and side-chat forks
+    // reach the thread list only through this snapshot.
+    hidden_child_threads: async () => {
+      const [spawned, forks] = await Promise.all([
+        bb.sdk.threads.list({
+          archived: false,
+          includeHidden: true,
+          hasParent: true,
+          limit: MAX_THREADS_PER_STATE,
+        }),
+        bb.sdk.threads.list({
+          archived: false,
+          includeHidden: true,
+          originKind: "fork",
+          limit: MAX_THREADS_PER_STATE,
+        }),
+      ]);
+      const threads = new Map<string, HiddenChildThread>();
+      for (const thread of [...spawned, ...forks]) {
+        const parentThreadId =
+          thread.parentThreadId ??
+          thread.lifecycleOwnerThreadId ??
+          thread.sourceThreadId;
+        if (thread.visibility !== "hidden" || parentThreadId === null) continue;
+        threads.set(thread.id, {
+          id: thread.id,
+          title:
+            thread.title?.trim() || thread.titleFallback?.trim() || "Side chat",
+          parentThreadId,
+          createdAt: thread.createdAt,
+          status: thread.runtime.displayStatus,
+          needsAttention: thread.hasPendingInteraction,
+          backgroundWork:
+            thread.activity.activeBackgroundAgentCount +
+            thread.activity.activeWorkflowCount,
+          originKind: thread.originKind,
+          originPluginId: thread.originPluginId,
+        });
+      }
+      return { threads: [...threads.values()] };
     },
 
     close_side_chat: async ({ threadId }) => {
