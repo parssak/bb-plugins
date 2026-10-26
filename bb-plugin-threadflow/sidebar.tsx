@@ -59,7 +59,12 @@ import {
   threadReferenceMarkdown,
 } from "./thread-reference";
 
-type TypeInChatDetail = { threadId: string; text: string };
+type TypeInChatDetail = {
+  threadId: string;
+  text: string;
+  /** Set by the composer that accepted the keystroke. */
+  handled?: boolean;
+};
 
 const TYPE_IN_CHAT_EVENT = "threadflow:type-in-chat";
 
@@ -1171,6 +1176,13 @@ function ActiveThreadList({
     const onReturnToSidebar = (event: Event) => {
       const threadId = (event as CustomEvent<unknown>).detail;
       if (typeof threadId !== "string") return;
+      // Never move focus to some other row when the sent thread isn't listed.
+      const listed = Array.from(
+        listRef.current?.querySelectorAll<HTMLElement>(
+          "[data-threadflow-row]",
+        ) ?? [],
+      ).some((row) => row.dataset.threadId === threadId);
+      if (!listed) return;
       keepSidebarFocusRef.current = true;
       setSelectedThreadId(threadId);
       window.requestAnimationFrame(() => focusSidebarRow(threadId));
@@ -1229,13 +1241,9 @@ function ActiveThreadList({
       const focusInside =
         activeElement !== null && list.contains(activeElement);
 
+      // Escape from outside the list is handled after BB in onEscapeBubble.
       if (event.key === "Escape") {
-        if (
-          !focusInside &&
-          target !== document.body &&
-          target !== document.documentElement
-        )
-          return;
+        if (!focusInside) return;
         event.preventDefault();
         event.stopImmediatePropagation();
         const activeSummary =
@@ -1291,27 +1299,66 @@ function ActiveThreadList({
         return;
       }
 
-      if (event.key.length === 1 && selectedThreadId !== null) {
+      if (
+        event.key.length === 1 &&
+        event.key.trim() !== "" &&
+        selectedThreadId !== null
+      ) {
+        const detail: TypeInChatDetail = {
+          threadId: selectedThreadId,
+          text: event.key,
+        };
+        window.dispatchEvent(
+          new CustomEvent<TypeInChatDetail>(TYPE_IN_CHAT_EVENT, { detail }),
+        );
+        // Leave the key alone when no open composer took it.
+        if (!detail.handled) return;
         keepSidebarFocusRef.current = false;
         setKeyboardFocusMode("chat");
         event.preventDefault();
         event.stopImmediatePropagation();
+      }
+    };
+    // Escape with nothing focused toggles into the sidebar, but only after BB
+    // and its panels have had their turn and left the key unhandled.
+    const onEscapeBubble = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        event.isComposing ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        (event.target !== document.body &&
+          event.target !== document.documentElement)
+      )
+        return;
+      const openSummary = document.querySelector<HTMLElement>(
+        '[data-threadflow-summary-open="true"]',
+      );
+      const summaryThreadId = openSummary?.dataset.threadflowSummaryThreadId;
+      if (summaryThreadId !== undefined) {
         window.dispatchEvent(
-          new CustomEvent<TypeInChatDetail>(TYPE_IN_CHAT_EVENT, {
-            detail: { threadId: selectedThreadId, text: event.key },
+          new CustomEvent<string>(DISMISS_CHAT_SUMMARY_EVENT, {
+            detail: summaryThreadId,
           }),
         );
+        return;
       }
+      keepSidebarFocusRef.current = true;
+      focusSidebarRow(selectedThreadId);
     };
 
     window.addEventListener("pointerdown", onPointerDown, true);
     window.addEventListener("focusin", onFocusIn, true);
     window.addEventListener("keydown", onKeyDown, true);
+    window.addEventListener("keydown", onEscapeBubble);
     window.addEventListener(RETURN_TO_SIDEBAR_EVENT, onReturnToSidebar);
     return () => {
       window.removeEventListener("pointerdown", onPointerDown, true);
       window.removeEventListener("focusin", onFocusIn, true);
       window.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("keydown", onEscapeBubble);
       window.removeEventListener(RETURN_TO_SIDEBAR_EVENT, onReturnToSidebar);
     };
   }, [

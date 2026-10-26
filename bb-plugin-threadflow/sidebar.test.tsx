@@ -330,3 +330,52 @@ test("a send-later on a hidden review snoozes its parent and shows the send time
   expect(parent.textContent).toContain("in 2h");
   slot.lifecycle.unmount();
 });
+
+async function renderActiveList() {
+  // jsdom doesn't implement scrolling.
+  HTMLElement.prototype.scrollIntoView ??= () => {};
+  const app = await loadPluginApp(() => import("./app"));
+  return renderSlot(
+    app.threadLists[0]!,
+    {
+      activeThreadId: "one",
+      activeProjectId: null,
+      isCompactViewport: false,
+      onNavigate: () => {},
+      searchQuery: "",
+    },
+    {
+      sidebarThreads: { threads: [thread("one")], projects: [] },
+      rpc: {
+        wait_dependencies: () => ({ dependencies: [], scheduledSends: [] }),
+      },
+    },
+  );
+}
+
+test("Escape with nothing focused reaches BB first and is left alone when BB handles it", async () => {
+  const slot = await renderActiveList();
+  const row = await slot.findByRole("link", { name: "one" });
+  const seen: boolean[] = [];
+  const hostEscape = (event: KeyboardEvent) => {
+    seen.push(true);
+    event.preventDefault();
+  };
+  document.addEventListener("keydown", hostEscape);
+  document.body.focus();
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  document.removeEventListener("keydown", hostEscape);
+  expect(seen).toEqual([true]);
+  expect(document.activeElement).not.toBe(row);
+
+  fireEvent.keyDown(document.body, { key: "Escape" });
+  expect(document.activeElement).toBe(row);
+});
+
+test("typing on a sidebar row with no composer to take it leaves the key alone", async () => {
+  const slot = await renderActiveList();
+  const row = await slot.findByRole("link", { name: "one" });
+  row.focus();
+  expect(fireEvent.keyDown(row, { key: "x" })).toBe(true);
+  expect(fireEvent.keyDown(row, { key: " " })).toBe(true);
+});

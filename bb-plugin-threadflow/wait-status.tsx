@@ -10,7 +10,12 @@ import {
 import type { QueuedThreadWait, rpcContract } from "./contract";
 import type { ActiveThreadflowWait } from "./wait-service";
 
-type TypeInChatDetail = { threadId: string; text: string };
+type TypeInChatDetail = {
+  threadId: string;
+  text: string;
+  /** Set by the composer that accepted the keystroke. */
+  handled?: boolean;
+};
 
 const TYPE_IN_CHAT_EVENT = "threadflow:type-in-chat";
 
@@ -223,13 +228,21 @@ export function WaitComposerBridge() {
   const composer = useComposer();
   const threadId =
     composer.scope.kind === "thread" ? composer.scope.threadId : null;
+  // Only a draft started by typing on a sidebar row hands focus back to the
+  // sidebar on send; drafts started in the composer keep focus in the chat.
+  const startedFromSidebar = useRef(false);
+  useEffect(() => {
+    startedFromSidebar.current = false;
+  }, [threadId]);
   useEffect(() => {
     if (!threadId) return;
-    return composer.onSubmitted(() =>
+    return composer.onSubmitted(() => {
+      if (!startedFromSidebar.current) return;
+      startedFromSidebar.current = false;
       window.dispatchEvent(
         new CustomEvent(RETURN_TO_SIDEBAR_EVENT, { detail: threadId }),
-      ),
-    );
+      );
+    });
   }, [composer, threadId]);
   useEffect(() => {
     const type = (event: Event) => {
@@ -240,6 +253,8 @@ export function WaitComposerBridge() {
         detail.text?.length !== 1
       )
         return;
+      detail.handled = true;
+      startedFromSidebar.current = true;
       composer.insert(detail.text, { at: "end" });
       composer.focus();
     };
