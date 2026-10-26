@@ -3,12 +3,12 @@ export type ThreadTreeNode = {
   status: string;
   /** Background agents and workflows still running for the thread. */
   backgroundWork: number;
+  queuedWork: "none" | "waiting" | "failed";
   children: readonly ThreadTreeNode[];
 };
 
 export type ThreadListStateInput = ThreadTreeNode & {
   archived: boolean;
-  queuedWork: "none" | "waiting" | "failed";
 };
 
 export type ThreadListState = "needs-you" | "waiting" | "working";
@@ -28,13 +28,23 @@ export function threadTreeIsWorking(thread: ThreadTreeNode): boolean {
   return threadIsRunning(thread) || thread.children.some(threadTreeIsWorking);
 }
 
+function threadHasScheduledWork(thread: ThreadTreeNode): boolean {
+  return thread.status !== "error" && thread.queuedWork === "waiting";
+}
+
+/** A send-later on a nested review or side chat snoozes its root thread too. */
+export function threadTreeHasScheduledWork(thread: ThreadTreeNode): boolean {
+  return threadHasScheduledWork(thread) || thread.children.some(threadTreeHasScheduledWork);
+}
+
 export function classifyThreadListState(thread: ThreadListStateInput): ThreadListState {
   if (threadTreeNeedsAttention(thread)) return "needs-you";
   if (!thread.archived && threadTreeIsWorking(thread)) return "working";
   if (
     !thread.archived
     && thread.status !== "error"
-    && thread.queuedWork === "waiting"
+    && thread.queuedWork !== "failed"
+    && threadTreeHasScheduledWork(thread)
   ) {
     return "waiting";
   }

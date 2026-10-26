@@ -56,7 +56,7 @@ test("hidden review threads and their side chats report their owning thread", as
     overrides: Parameters<typeof makeThreadResponse>[0],
     activeBackgroundAgentCount = 0,
   ) => ({
-    ...makeThreadResponse(overrides),
+    ...makeThreadResponse({ queuedWork: "none", ...overrides }),
     hasPendingInteraction: false,
     activity: {
       activeBackgroundAgentCount,
@@ -76,6 +76,7 @@ test("hidden review threads and their side chats report their owning thread", as
       originPluginId: "chat-tools",
       visibility: "hidden",
       status: "idle",
+      queuedWork: "waiting",
       createdAt: 2,
     },
     2,
@@ -119,6 +120,7 @@ test("hidden review threads and their side chats report their owning thread", as
           status: "idle",
           needsAttention: false,
           backgroundWork: 2,
+          queuedWork: "waiting",
           originKind: "fork",
           originPluginId: "chat-tools",
         },
@@ -130,6 +132,7 @@ test("hidden review threads and their side chats report their owning thread", as
           status: "active",
           needsAttention: false,
           backgroundWork: 0,
+          queuedWork: "none",
           originKind: "fork",
           originPluginId: "side-chat",
         },

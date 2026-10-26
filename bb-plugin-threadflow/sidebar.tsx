@@ -423,21 +423,26 @@ function ChildThreadRows({
   selectedThreadId,
   onOpen,
   onClose,
+  nested = false,
 }: {
   threads: readonly NativeChildThread[];
   selectedThreadId: string | null;
   onOpen: (thread: NativeChildThread) => void;
   onClose: (thread: NativeChildThread) => Promise<void>;
+  nested?: boolean;
 }) {
   return (
-    <div data-threadflow-children className="mt-0.5 space-y-0.5 pl-2">
+    <div
+      data-threadflow-children
+      className={nested ? "mt-0.5 space-y-0.5 pl-2" : "mt-0.5 space-y-0.5"}
+    >
       {threads.map((child) => (
         <div key={child.id}>
           <div
             className={
               selectedThreadId === child.id
-                ? "flex w-full items-center gap-1 rounded bg-muted/60 px-1.5 py-0.5 text-left text-[10px] text-foreground outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
-                : "flex w-full items-center gap-1 rounded px-1.5 py-0.5 text-left text-[10px] text-muted-foreground outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+                ? "flex w-full items-center gap-1 rounded bg-muted/60 px-1 py-0.5 text-left text-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
+                : "flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-xs text-muted-foreground outline-none hover:bg-muted/50 hover:text-foreground focus-visible:ring-1 focus-visible:ring-muted-foreground/40"
             }
           >
             <a
@@ -513,6 +518,7 @@ function ChildThreadRows({
               selectedThreadId={selectedThreadId}
               onOpen={onOpen}
               onClose={onClose}
+              nested
             />
           )}
         </div>

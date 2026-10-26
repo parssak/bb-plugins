@@ -29,6 +29,7 @@ function child(overrides: Partial<ThreadTreeNode> = {}): ThreadTreeNode {
     backgroundWork: 0,
     children: [],
     needsAttention: false,
+    queuedWork: "none",
     status: "idle",
     ...overrides,
   };
@@ -56,6 +57,28 @@ test("a nested review or its background agents keep the root working", () => {
   })), "working");
   assert.equal(classifyThreadListState(thread({ backgroundWork: 1 })), "working");
   assert.equal(classifyThreadListState(thread({ children: [child()] })), "needs-you");
+});
+
+test("a send-later on a nested review snoozes its root thread", () => {
+  assert.equal(classifyThreadListState(thread({
+    children: [child({ queuedWork: "waiting" })],
+  })), "waiting");
+  assert.equal(classifyThreadListState(thread({
+    children: [child({ children: [child({ queuedWork: "waiting" })] })],
+  })), "waiting");
+  assert.equal(classifyThreadListState(thread({
+    children: [child({ queuedWork: "waiting" }), child({ status: "active" })],
+  })), "working");
+  assert.equal(classifyThreadListState(thread({
+    children: [child({ queuedWork: "waiting" }), child({ needsAttention: true })],
+  })), "needs-you");
+  assert.equal(classifyThreadListState(thread({
+    children: [child({ status: "error", queuedWork: "waiting" })],
+  })), "needs-you");
+  assert.equal(classifyThreadListState(thread({
+    queuedWork: "failed",
+    children: [child({ queuedWork: "waiting" })],
+  })), "needs-you");
 });
 
 test("attention and failed queues remain needs-you states", () => {

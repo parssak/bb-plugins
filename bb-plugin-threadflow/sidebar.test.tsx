@@ -243,6 +243,7 @@ test("hidden reviews nest under their thread and keep it working while they run"
               status: "idle",
               needsAttention: false,
               backgroundWork: 2,
+              queuedWork: "none",
               originKind: "fork",
               originPluginId: "chat-tools",
             },
@@ -254,6 +255,7 @@ test("hidden reviews nest under their thread and keep it working while they run"
               status: "active",
               needsAttention: false,
               backgroundWork: 0,
+              queuedWork: "none",
               originKind: "fork",
               originPluginId: "side-chat",
             },
@@ -269,6 +271,8 @@ test("hidden reviews nest under their thread and keep it working while they run"
   expect(parentRow.contains(review)).toBe(true);
   expect(review.closest("[data-threadflow-children]")?.contains(reply)).toBe(true);
   expect(review.closest("[data-threadflow-children]")).not.toBe(reply.closest("[data-threadflow-children]"));
+  // BB's built-in side chats can be closed too, so an unused one isn't stuck.
+  expect(slot.getByRole("button", { name: "Close Reply" })).toBeTruthy();
   expect(slot.getByRole("img", { name: "2 background agents running" }))
     .toBeTruthy();
   expect(slot.getAllByRole("img", { name: "Working" })).toHaveLength(2);
@@ -277,5 +281,52 @@ test("hidden reviews nest under their thread and keep it working while they run"
   expect(slot.inspection.navigateCalls).toContainEqual(
     expect.objectContaining({ method: "toThread", threadId: "review" }),
   );
+  slot.lifecycle.unmount();
+});
+
+test("a send-later on a hidden review snoozes its parent and shows the send time", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  const sendAt = Date.now() + 2 * 60 * 60 * 1_000 + 60_000;
+  const slot = renderSlot(
+    app.threadLists[0]!,
+    {
+      activeThreadId: null,
+      activeProjectId: null,
+      isCompactViewport: false,
+      onNavigate: () => {},
+      searchQuery: "",
+    },
+    {
+      sidebarThreads: { threads: [thread("parent")], projects: [] },
+      rpc: {
+        wait_dependencies: () => ({
+          dependencies: [],
+          scheduledSends: [{ threadId: "review", sendAt }],
+        }),
+        hidden_child_threads: () => ({
+          threads: [
+            {
+              id: "review",
+              title: "Review",
+              parentThreadId: "parent",
+              createdAt: 2,
+              status: "idle",
+              needsAttention: false,
+              backgroundWork: 0,
+              queuedWork: "waiting",
+              originKind: "fork",
+              originPluginId: "chat-tools",
+            },
+          ],
+        }),
+      },
+    },
+  );
+  await slot.findByRole("link", { name: "Review" });
+  const parent = slot.getByRole("link", { name: "parent" });
+  await waitFor(() =>
+    expect(parent.closest("section")?.textContent).toMatch(/^snoozed/),
+  );
+  expect(parent.textContent).toContain("in 2h");
   slot.lifecycle.unmount();
 });

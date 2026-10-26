@@ -21,6 +21,22 @@ const SIDE_CHAT_PLUGIN_IDS = ["threadflow", "chat-tools"];
 
 type ChildThreadSource = Omit<NativeChildThread, "children">;
 
+function childScheduledSendAt(
+  children: readonly NativeChildThread[],
+  scheduledSends: Readonly<Record<string, number>>,
+): number | null {
+  const sendAts = children.flatMap((child) => [
+    child.status === "idle" &&
+    !child.needsAttention &&
+    child.queuedWork === "waiting"
+      ? (scheduledSends[child.id] ?? null)
+      : null,
+    childScheduledSendAt(child.children, scheduledSends),
+  ]);
+  const scheduled = sendAts.filter((sendAt) => sendAt !== null);
+  return scheduled.length === 0 ? null : Math.min(...scheduled);
+}
+
 function isOwnedSideChat(thread: {
   originKind: "fork" | null;
   originPluginId: string | null;
@@ -111,7 +127,8 @@ export function useThreadflowThreads(scope: "recent" | "all") {
         needsAttention: thread.hasPendingInteraction,
         backgroundWork:
           thread.activity.backgroundAgents + thread.activity.workflows,
-        closeable: owned,
+        queuedWork: thread.queuedWork,
+        closeable: thread.isHidden && thread.originKind === "fork",
         navigation: owned ? "thread" : "split",
       });
     }
@@ -126,7 +143,10 @@ export function useThreadflowThreads(scope: "recent" | "all") {
         status: thread.status,
         needsAttention: thread.needsAttention,
         backgroundWork: thread.backgroundWork,
-        closeable: owned,
+        queuedWork: thread.queuedWork,
+        // Any hidden fork can be closed, including BB's own side chats that
+        // were opened by accident and never used.
+        closeable: thread.originKind === "fork",
         navigation: owned ? "thread" : "split",
       });
     }
@@ -149,29 +169,35 @@ export function useThreadflowThreads(scope: "recent" | "all") {
         });
     return native.threads
       .filter((t) => !t.parentThreadId && !t.isHidden)
-      .map((t) => ({
-        id: t.id,
-        title: t.displayTitle || t.title || "Untitled",
-        projectId: t.projectId,
-        project: projects.get(t.projectId) ?? "Personal",
-        provider: providerNames.get(t.providerId) ?? t.providerId,
-        createdAt: t.createdAt,
-        updatedAt: t.updatedAt,
-        archivedAt: t.archivedAt,
-        archived: t.isArchived,
-        needsAttention: t.hasPendingInteraction,
-        queuedWork: t.queuedWork,
-        scheduledSendAt:
-          t.status === "idle" &&
-          !t.hasPendingInteraction &&
-          t.queuedWork === "waiting"
-            ? (scheduledSends[t.id] ?? null)
-            : null,
-        waitingForThreadIds: dependencies[t.id] ?? [],
-        status: t.runtimeStatus,
-        backgroundWork: t.activity.backgroundAgents + t.activity.workflows,
-        children: buildChildren(t.id, new Set([t.id])),
-      }));
+      .map((t) => {
+        const children = buildChildren(t.id, new Set([t.id]));
+        const idle = t.status === "idle" && !t.hasPendingInteraction;
+        return {
+          id: t.id,
+          title: t.displayTitle || t.title || "Untitled",
+          projectId: t.projectId,
+          project: projects.get(t.projectId) ?? "Personal",
+          provider: providerNames.get(t.providerId) ?? t.providerId,
+          createdAt: t.createdAt,
+          updatedAt: t.updatedAt,
+          archivedAt: t.archivedAt,
+          archived: t.isArchived,
+          needsAttention: t.hasPendingInteraction,
+          queuedWork: t.queuedWork,
+          // A parent snoozed by a review's send-later shows when that send fires.
+          scheduledSendAt: !idle
+            ? null
+            : t.queuedWork === "waiting"
+              ? (scheduledSends[t.id] ?? null)
+              : t.queuedWork === "none"
+                ? childScheduledSendAt(children, scheduledSends)
+                : null,
+          waitingForThreadIds: dependencies[t.id] ?? [],
+          status: t.runtimeStatus,
+          backgroundWork: t.activity.backgroundAgents + t.activity.workflows,
+          children,
+        };
+      });
   }, [
     native.threads,
     native.projects,

@@ -13,6 +13,7 @@ const hiddenChildThreadSchema = z
     status: z.string(),
     needsAttention: z.boolean(),
     backgroundWork: z.number(),
+    queuedWork: z.enum(["none", "waiting", "failed"]),
     originKind: z.enum(["fork"]).nullable(),
     originPluginId: z.string().nullable(),
   })
@@ -47,6 +48,7 @@ export type NativeChildThread = {
   needsAttention: boolean;
   /** Background agents and workflows still running for this thread. */
   backgroundWork: number;
+  queuedWork: "none" | "waiting" | "failed";
   closeable: boolean;
   navigation: "thread" | "split";
   children: NativeChildThread[];

@@ -308,6 +308,7 @@ export default function plugin(bb: BbPluginApi) {
     "interaction.pending",
     "message.queued",
     "message.dispatched",
+    "message.cancelled",
   ] as const)
     bb.events.on(event, publishThreadsChanged);
   bb.events.on("thread.active", ({ thread }) => {
@@ -393,6 +394,7 @@ export default function plugin(bb: BbPluginApi) {
           backgroundWork:
             thread.activity.activeBackgroundAgentCount +
             thread.activity.activeWorkflowCount,
+          queuedWork: thread.queuedWork,
           originKind: thread.originKind,
           originPluginId: thread.originPluginId,
         });
