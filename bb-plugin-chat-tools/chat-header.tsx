@@ -2,14 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   UrlLink,
-  experimental_useSidebarThreadPullRequest,
+  experimental_useRpcKeyedQuery,
   useRpc,
 } from "@get-bb/plugin-sdk/app";
-import type {
-  PluginSidebarPullRequest,
-  PluginThreadHeaderActionProps,
-} from "@get-bb/plugin-sdk/app";
+import type { PluginThreadHeaderActionProps } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./contract";
+import {
+  GITHUB_PR_STATUS_PLUGIN_ID,
+  githubPrContract,
+  type PullRequest,
+} from "./pull-request";
 import {
   parseThreadTitleBrand,
   type ThreadTitleBrand,
@@ -17,6 +19,7 @@ import {
 
 type ChatTarget = {
   id: string;
+  environmentId: string | null;
   title: string;
   createdAt: number;
   project?: string;
@@ -64,7 +67,7 @@ function threadAccent(title: string, createdAt: number): { color: string } {
 function PullRequestLink({
   pullRequest,
 }: {
-  pullRequest: PluginSidebarPullRequest;
+  pullRequest: PullRequest;
 }) {
   return (
     <UrlLink
@@ -140,20 +143,18 @@ function ChatAccentHeader({
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const sourceThreadId = target.sourceThreadId ?? target.id;
-  const { pullRequest } =
-    experimental_useSidebarThreadPullRequest(sourceThreadId);
+  const { data, isLoading } = experimental_useRpcKeyedQuery({
+    pluginId: GITHUB_PR_STATUS_PLUGIN_ID,
+    contract: githubPrContract,
+    method: "pullRequests",
+    keys: target.environmentId === null ? [] : [target.environmentId],
+  });
+  const result =
+    target.environmentId === null ? undefined : data?.[target.environmentId];
+  const pullRequest = result?.outcome === "available" ? result.pullRequest : null;
+  const checks = isLoading ? undefined : pullRequest?.checks ?? null;
   const [worktreeChanges, setWorktreeChanges] =
     useState<WorktreeChanges | null>(null);
-  const [checks, setChecks] = useState<
-    | {
-        state: "failing" | "no_checks" | "passing" | "pending" | "unknown";
-        failedCount: number;
-        pendingCount: number;
-        totalCount: number;
-      }
-    | null
-    | undefined
-  >(undefined);
   const accent = threadAccent(
     target.accentTitle ?? target.title,
     target.accentCreatedAt ?? target.createdAt,
@@ -165,31 +166,6 @@ function ChatAccentHeader({
       : project === "usebogi.com"
         ? null
         : project;
-
-  useEffect(() => {
-    if (pullRequest === null) {
-      setChecks(undefined);
-      return;
-    }
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const result = await rpc.call("pull_request_checks", {
-          threadId: sourceThreadId,
-        });
-        if (!cancelled) setChecks(result.checks);
-      } catch {
-        if (!cancelled) setChecks(null);
-      }
-    };
-    setChecks(undefined);
-    void load();
-    const timer = window.setInterval(() => void load(), 30_000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [pullRequest?.number, rpc, sourceThreadId]);
 
   useEffect(() => {
     let cancelled = false;

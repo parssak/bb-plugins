@@ -1,5 +1,6 @@
 import { registerLegacyImport } from "./legacy-storage.ts";
 import { rpcContract } from "./contract.ts";
+import { readPullRequest } from "./pull-request.ts";
 import { type BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import {
@@ -481,9 +482,7 @@ export default function plugin(bb: BbPluginApi) {
       try {
         const [statusResult, pullRequestResult] = await Promise.all([
           bb.sdk.environments.status({ environmentId: thread.environmentId }),
-          bb.sdk.environments.pullRequest({
-            environmentId: thread.environmentId,
-          }),
+          readPullRequest(bb, thread.environmentId),
         ]);
         const stateParts: string[] = [];
         if (statusResult.outcome === "available") {
@@ -690,9 +689,7 @@ export default function plugin(bb: BbPluginApi) {
         undefined
       )
         return;
-      const result = await bb.sdk.environments.pullRequest({
-        environmentId: thread.environmentId,
-      });
+      const result = await readPullRequest(bb, thread.environmentId);
       if (
         result.outcome === "available" &&
         (result.pullRequest.state === "open" ||
@@ -844,6 +841,7 @@ export default function plugin(bb: BbPluginApi) {
       return {
         target: {
           id: thread.id,
+          environmentId: sourceThread.environmentId,
           title,
           createdAt: thread.createdAt,
           project,
@@ -962,7 +960,7 @@ export default function plugin(bb: BbPluginApi) {
         });
         rows.push(...timeline.rows);
         olderCursor = timeline.timelinePage.olderCursor;
-        if (!timeline.timelinePage.hasOlderRows || olderCursor === null) break;
+        if (olderCursor === null) break;
       }
       return { messages: collectUserMessageTimestamps(rows) };
     },
@@ -1023,9 +1021,7 @@ export default function plugin(bb: BbPluginApi) {
     pull_request_checks: async ({ threadId }) => {
       const thread = await bb.sdk.threads.get({ threadId });
       if (thread.environmentId === null) return { checks: null };
-      const result = await bb.sdk.environments.pullRequest({
-        environmentId: thread.environmentId,
-      });
+      const result = await readPullRequest(bb, thread.environmentId);
       if (result.outcome !== "available") return { checks: null };
       return {
         checks: {

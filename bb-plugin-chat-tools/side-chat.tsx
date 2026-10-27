@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ThreadChat, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
-import type { PluginThreadPanelProps } from "@get-bb/plugin-sdk/app";
+import type { ExperimentalThreadActionTabProps } from "@get-bb/plugin-sdk/app";
 import type { rpcContract } from "./contract";
 import { toast } from "sonner";
 import { Button } from "./components/ui/button";
@@ -10,7 +10,7 @@ const HANDOFFS_CHANGED_CHANNEL = "side-chat-handoffs-changed";
 export function NativeSideChatPanel({
   threadId: sourceThreadId,
   params,
-}: PluginThreadPanelProps) {
+}: ExperimentalThreadActionTabProps) {
   const rpc = useRpc<typeof rpcContract>();
   const requestedThreadId =
     typeof params === "object" &&

@@ -6,6 +6,15 @@ import {
 } from "@get-bb/plugin-sdk/testing";
 import plugin from "./server.ts";
 
+const openPullRequest = {
+  number: 42,
+  title: "Test PR",
+  url: "https://github.com/example/repo/pull/42",
+  state: "open",
+  attention: "checks_pending",
+  checks: { state: "pending", totalCount: 2, failedCount: 0, pendingCount: 1 },
+};
+
 test("worktree changes use the environment base when status has no merge-base details", async () => {
   const thread = makeThreadResponse({
     id: "thread-changes",
@@ -131,11 +140,15 @@ test("automatic reviews are claimed once while manual reviews remain available",
         update: async () => reviewThread,
         timeline: async () => ({ rows: [] }),
       },
-      environments: {
-        pullRequest: async () => ({
-          outcome: "available",
-          pullRequest: { state: "open" },
-        }),
+      plugins: {
+        callRpc: async ({ pluginId, method, input, outputSchema }) => {
+          assert.equal(pluginId, "bb--github-pr-status");
+          assert.equal(method, "pullRequests");
+          assert.deepEqual(input, { keys: [sourceThread.environmentId] });
+          return outputSchema.parse({
+            [sourceThread.environmentId!]: { outcome: "available", pullRequest: openPullRequest },
+          });
+        },
       },
     },
   });
@@ -192,3 +205,51 @@ test("automatic reviews are claimed once while manual reviews remain available",
 
   await reloaded.harness.lifecycle.dispose();
 });
+
+for (const scenario of ["open", "draft", "merged", "closed", "absent", "unavailable", "missing", "error"] as const) {
+  test(`idle review trigger handles PR lookup: ${scenario}`, async () => {
+    const source = makeThreadResponse({ id: "source", environmentId: "env", sourceThreadId: null, parentThreadId: null });
+    const review = makeThreadResponse({ id: "review", sourceThreadId: source.id, parentThreadId: source.id });
+    let lookupFails = scenario === "error";
+    const { bb, harness } = createFakePluginHost({
+      pluginId: "chat-tools",
+      sdk: {
+        plugins: {
+          callRpc: async ({ outputSchema }) => {
+            if (lookupFails) throw new Error("PR plugin unavailable");
+            const result = scenario === "absent" ? { outcome: "absent" }
+              : scenario === "unavailable" ? { outcome: "unavailable", message: "Host offline" }
+              : { outcome: "available", pullRequest: { ...openPullRequest, state: scenario === "error" ? "open" : scenario } };
+            return outputSchema.parse(scenario === "missing" ? {} : { env: result });
+          },
+        },
+        threads: {
+          get: async ({ threadId }) => threadId === source.id ? source : review,
+          list: async () => [],
+          fork: async () => review,
+          update: async () => review,
+          timeline: async () => ({ rows: [] }),
+        },
+      },
+    });
+    plugin(bb);
+    try {
+      const idle = () => harness.behavior.emitThreadEvent("thread.idle", { thread: source, lastAssistantText: null });
+      await idle();
+      const shouldStart = scenario === "open" || scenario === "draft";
+      assert.equal(harness.inspection.sdk.callsTo("threads.fork").length, shouldStart ? 1 : 0);
+      await idle();
+      assert.equal(harness.inspection.sdk.callsTo("threads.fork").length, shouldStart ? 1 : 0);
+      assert.equal(await bb.storage.kv.get(`automatic-review-claim:${source.id}`) !== undefined, shouldStart);
+      if (scenario === "error") {
+        lookupFails = false;
+        await idle();
+        assert.equal(harness.inspection.sdk.callsTo("threads.fork").length, 1);
+      }
+      const checks = await harness.behavior.callRpc("pull_request_checks", { threadId: source.id });
+      assert.deepEqual(checks, { checks: ["absent", "unavailable", "missing"].includes(scenario) ? null : openPullRequest.checks });
+    } finally {
+      await harness.lifecycle.dispose();
+    }
+  });
+}

@@ -15,7 +15,9 @@ export default definePluginApp((app) => {
     title: "Thread status",
     component: NativeThreadHeader,
   });
-  app.slots.threadPanelAction({
+  app.slots.experimental_tab({
+    context: { kind: "thread" },
+    availability: "action",
     id: "side-chat",
     title: "Side chat",
     icon: "MessageQuestion",

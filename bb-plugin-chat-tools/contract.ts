@@ -29,6 +29,7 @@ export const rpcContract = defineRpcContract({
         target: z
           .object({
             id: z.string(),
+            environmentId: z.string().nullable(),
             title: z.string(),
             createdAt: z.number(),
             project: z.string(),

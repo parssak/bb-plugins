@@ -66,3 +66,43 @@ test("Right Arrow accepts a valid composer suggestion", async () => {
   expect(slot.inspection.composer.text).toBe("Review the changes");
   slot.lifecycle.unmount();
 });
+
+test("Command-Shift-E creates a review and opens the registered side-chat tab", async () => {
+  const app = await loadPluginApp(() => import("./app"));
+  expect(app.tabs).toContainEqual(expect.objectContaining({
+    id: "side-chat",
+    context: { kind: "thread" },
+    availability: "action",
+  }));
+  const slot = renderSlot(
+    { component: app.composerCustomizations[0]!.banners![0]!.component },
+    {},
+    {
+      composer: { scope: { kind: "thread", threadId: "source" }, text: "" },
+      rpc: {
+        prompt_history: () => ({ prompts: [] }),
+        user_message_timestamps: () => ({ messages: [] }),
+        chat_summary: () => ({ summary: null }),
+        set_viewing_thread: () => ({ ok: true }),
+        create_side_chat: (input) => {
+          expect(input).toEqual({
+            sourceThreadId: "source",
+            initialMessage: "Review the changes in this worktree",
+            title: "Review",
+          });
+          return { thread: { id: "review" } };
+        },
+      },
+      openThreadPanel: () => true,
+    },
+  );
+  try {
+    fireEvent.keyDown(document.body, { key: "E", metaKey: true, shiftKey: true });
+    await waitFor(() => expect(slot.inspection.navigateCalls).toContainEqual({
+      method: "openThreadPanel",
+      options: { actionId: "side-chat", title: "Review", params: { childThreadId: "review" } },
+    }));
+  } finally {
+    slot.lifecycle.unmount();
+  }
+});
