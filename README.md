@@ -9,6 +9,7 @@ Independent plugins for BB 0.46 and Plugin SDK 0.6.37 or later.
 | Chat tools | TLDR summaries, review side chats, handoffs, prompt suggestions, and chat decoration |
 | Usage insights | Codex and Claude Code quotas, separate daily history, and optional Codex reset forecasts |
 | Thread Nudger | Existing idle-thread check-ins |
+| Dev Server | A thread-header button that runs a checkout's `./dev.sh` and opens its worktree URL (BB 0.48+) |
 
 Each directory is an independent package with its own backend, frontend, storage, tests, and build. Journal, Chat tools, and Usage insights work with Threadflow disabled. Threadflow reads BB's live sidebar cache; only its wait dependencies and scheduled-send metadata come from its backend.
 

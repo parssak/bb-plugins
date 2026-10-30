@@ -7,6 +7,7 @@
     { "name": "journal", "source": "./bb-plugin-journal" },
     { "name": "chat-tools", "source": "./bb-plugin-chat-tools" },
     { "name": "usage-insights", "source": "./bb-plugin-usage-insights" },
-    { "name": "thread-nudger", "source": "./bb-plugin-thread-nudger" }
+    { "name": "thread-nudger", "source": "./bb-plugin-thread-nudger" },
+    { "name": "dev-server", "source": "./bb-plugin-dev-server" }
   ]
 }

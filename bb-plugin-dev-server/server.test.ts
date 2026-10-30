@@ -1,0 +1,188 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+
+import plugin from "./server.ts";
+
+const ROOT = "/work/usebogi.com";
+const URL = "http://bogi-1a2b3c4d5e6f.localhost:14005";
+
+interface FakeTerminal {
+  status: "running" | "exited";
+  exitCode: number | null;
+  closeReason: "process-exit" | "user" | null;
+  output: string;
+  inputs: string[];
+}
+
+function fakeCheckout(options: { launcher?: boolean; settings?: Record<string, string | number | boolean> } = {}) {
+  const files = new Map<string, string>([
+    [`${ROOT}/.dev/environment.json`, JSON.stringify({ root: ROOT, url: URL, ports: { site: 14005 }, log: `${ROOT}/.dev/dev.log` })],
+  ]);
+  if (options.launcher !== false) files.set(`${ROOT}/dev.sh`, "#!/bin/bash\n");
+  const terminals = new Map<string, FakeTerminal>();
+  const created: unknown[] = [];
+  const closed: string[] = [];
+  const session = (id: string) => {
+    const terminal = terminals.get(id);
+    if (!terminal) throw new Error(`No terminal ${id}`);
+    return { id, status: terminal.status, exitCode: terminal.exitCode, closeReason: terminal.closeReason };
+  };
+  const { bb, harness } = createFakePluginHost({
+    pluginId: "dev-server-test",
+    settings: options.settings,
+    sdk: {
+      threads: {
+        get: async ({ threadId }: { threadId: string }) =>
+          makeThreadResponse({ id: threadId, environmentId: "env_shared" }),
+      },
+      environments: {
+        get: async () => ({ id: "env_shared", hostId: "host_remote", path: ROOT }),
+      },
+      // A remote host: status comes from the terminal, never a local port probe.
+      system: { config: async () => ({ primaryHostId: "host_server" }) },
+      files: {
+        read: async ({ path }: { path: string }) => {
+          const content = files.get(path);
+          if (content === undefined) throw new Error(`ENOENT ${path}`);
+          return { content, contentEncoding: "utf8" };
+        },
+      },
+      terminals: {
+        create: async (args: unknown) => {
+          created.push(args);
+          const id = `term_${created.length}`;
+          terminals.set(id, { status: "running", exitCode: null, closeReason: null, output: "", inputs: [] });
+          return session(id);
+        },
+        get: async ({ terminalId }: { terminalId: string }) => session(terminalId),
+        output: async ({ terminalId, sinceSeq = 0 }: { terminalId: string; sinceSeq?: number }) => {
+          const terminal = terminals.get(terminalId)!;
+          const text = terminal.output.slice(sinceSeq);
+          return {
+            chunks: text ? [{ seq: sinceSeq, dataBase64: Buffer.from(text).toString("base64") }] : [],
+            nextSeq: terminal.output.length,
+            status: terminal.status,
+            exitCode: terminal.exitCode,
+            closeReason: terminal.closeReason,
+            truncated: false,
+          };
+        },
+        input: async ({ terminalId, dataBase64 }: { terminalId: string; dataBase64: string }) => {
+          const terminal = terminals.get(terminalId)!;
+          terminal.inputs.push(Buffer.from(dataBase64, "base64").toString());
+          // The launcher handles Ctrl-C by cleaning up and exiting 130.
+          Object.assign(terminal, { status: "exited", exitCode: 130, closeReason: "process-exit" });
+          return session(terminalId);
+        },
+        close: async ({ terminalId }: { terminalId: string }) => {
+          closed.push(terminalId);
+          Object.assign(terminals.get(terminalId)!, { status: "exited", closeReason: "user" });
+          return session(terminalId);
+        },
+      },
+    } as never,
+  });
+  return { bb, harness, terminals, created, closed };
+}
+
+async function statusOf(harness: ReturnType<typeof fakeCheckout>["harness"], threadId: string) {
+  const statuses = (await harness.behavior.callRpc("status", { keys: [threadId] })) as Record<string, any>;
+  return statuses[threadId];
+}
+
+test("threads without ./dev.sh get no header controls", async () => {
+  const { bb, harness } = fakeCheckout({ launcher: false });
+  await plugin(bb);
+  assert.equal((await statusOf(harness, "thr_a")).state, "unavailable");
+  await harness.lifecycle.dispose();
+});
+
+test("Run dev starts a thread terminal and reports ready once the banner prints", async () => {
+  const { bb, harness, terminals, created } = fakeCheckout({ settings: { extraArgs: "--portless" } });
+  await plugin(bb);
+  assert.equal((await statusOf(harness, "thr_a")).state, "stopped");
+
+  const { terminalId } = (await harness.behavior.callRpc("start", { threadId: "thr_a" })) as {
+    terminalId: string;
+  };
+  assert.deepEqual(created, [{
+    scope: { kind: "thread", threadId: "thr_a" },
+    cols: 120,
+    rows: 32,
+    title: "dev.sh",
+    start: { mode: "command", command: "./dev.sh --portless" },
+  }]);
+  assert.deepEqual(await statusOf(harness, "thr_a"), {
+    state: "starting",
+    environmentId: "env_shared",
+    url: URL,
+    terminalId,
+    logPath: ".dev/dev.log",
+    external: false,
+    exitCode: null,
+  });
+
+  terminals.get(terminalId)!.output += "\u001b[1;36m  Bogi is ready\n\n  Open: " + URL + "\n";
+  assert.equal((await statusOf(harness, "thr_a")).state, "ready");
+
+  // Another thread on the same checkout sees the server but not the terminal.
+  const sibling = await statusOf(harness, "thr_b");
+  assert.equal(sibling.state, "ready");
+  assert.equal(sibling.terminalId, null);
+  await assert.rejects(
+    harness.behavior.callRpc("start", { threadId: "thr_b" }),
+    /already running for this checkout from another thread/,
+  );
+  assert.deepEqual(await harness.behavior.callRpc("start", { threadId: "thr_a" }), { terminalId });
+  assert.equal(created.length, 1);
+  await harness.lifecycle.dispose();
+});
+
+test("Stop dev interrupts the launcher so it can clean up its own processes", async () => {
+  const { bb, harness, terminals } = fakeCheckout();
+  await plugin(bb);
+  const { terminalId } = (await harness.behavior.callRpc("start", { threadId: "thr_a" })) as {
+    terminalId: string;
+  };
+  assert.deepEqual(await harness.behavior.callRpc("stop", { threadId: "thr_a" }), { stopped: true });
+  assert.deepEqual(terminals.get(terminalId)!.inputs, ["\u0003"]);
+
+  let status = await statusOf(harness, "thr_a");
+  for (let attempt = 0; status.state === "stopping" && attempt < 20; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    status = await statusOf(harness, "thr_a");
+  }
+  assert.equal(status.state, "stopped");
+  assert.equal(status.url, null);
+  await harness.lifecycle.dispose();
+});
+
+test("a failed run keeps its logs and is replaced by the next run", async () => {
+  const { bb, harness, terminals, closed } = fakeCheckout();
+  await plugin(bb);
+  const first = (await harness.behavior.callRpc("start", { threadId: "thr_a" })) as { terminalId: string };
+  Object.assign(terminals.get(first.terminalId)!, {
+    status: "exited",
+    exitCode: 1,
+    closeReason: "process-exit",
+  });
+  const failed = await statusOf(harness, "thr_a");
+  assert.equal(failed.state, "failed");
+  assert.equal(failed.exitCode, 1);
+  assert.equal(failed.terminalId, first.terminalId);
+
+  const second = (await harness.behavior.callRpc("start", { threadId: "thr_a" })) as { terminalId: string };
+  assert.notEqual(second.terminalId, first.terminalId);
+  assert.deepEqual(closed, [first.terminalId]);
+  assert.equal((await statusOf(harness, "thr_a")).state, "starting");
+  await harness.lifecycle.dispose();
+});
+
+test("rejects thread ids that are not BB thread ids", async () => {
+  const { bb, harness } = fakeCheckout();
+  await plugin(bb);
+  await assert.rejects(harness.behavior.callRpc("start", { threadId: "../etc" }));
+  await harness.lifecycle.dispose();
+});
