@@ -10,8 +10,9 @@ The button is one BB split button beside the workspace's Open button:
 - **Starting dev…** shows a spinner until the launcher prints its
   `Bogi is ready` banner or the site port starts listening. Clicking it shows
   the logs.
-- **Open app** (green dot) opens the worktree's URL using your BB browser
-  preference, such as BB's in-app browser.
+- **Open app** (green dot) shows the worktree in BB's browser in the thread's
+  side panel. A run started from the button opens there by itself as soon as
+  it is ready.
 
 Its menu adds Show logs, Copy URL, Restart dev, and Stop dev.
 
@@ -21,6 +22,10 @@ Its menu adds Show logs, Copy URL, Restart dev, and Stop dev.
   worktree (`http://bogi-<id>.localhost:<port>`, or the Portless URL). A
   launcher without that file still works when it prints `Open:`,
   `Development URL:`, or `Local:` with a URL.
+- The browser tab belongs to the thread. Open app reuses a tab already on the
+  worktree's address. After a restart, the auto-open replaces that tab at the
+  same page so it is not left on an error page. Without a BB desktop window,
+  Open app falls back to your BB link preference.
 - Status is per checkout. Every thread on the same worktree sees the same
   server, but only the thread that started it can reveal its terminal.
 - Stop sends Ctrl-C so the launcher runs its own scoped cleanup. After 20
@@ -38,6 +43,8 @@ Its menu adds Show logs, Copy URL, Restart dev, and Stop dev.
 - **Extra ./dev.sh arguments**: appended to every run, for example
   `--portless`. Only plain flags are accepted.
 - **Show logs when starting**: reveal the terminal after Run dev (default on).
+- **Open the app when ready**: show the worktree in BB's side browser once a
+  run started from the button is ready (default on).
 
 ## Development
 

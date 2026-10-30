@@ -50,6 +50,11 @@ export const rpcContract = defineRpcContract({
     output: z.object({ stopped: z.boolean() }).strict(),
     invalidates: ({ threadId }) => threadTag(threadId),
   },
+  open: {
+    input: threadInput,
+    /** False when no BB desktop window can show it; the client falls back to openUrl. */
+    output: z.object({ opened: z.boolean() }).strict(),
+  },
   restart: {
     input: threadInput,
     output: z.object({ terminalId: z.string() }).strict(),

@@ -16,7 +16,15 @@ interface FakeTerminal {
   inputs: string[];
 }
 
-function fakeCheckout(options: { launcher?: boolean; settings?: Record<string, string | number | boolean> } = {}) {
+interface FakeBrowserTab {
+  tabId: string;
+  threadId: string;
+  url: string;
+}
+
+function fakeCheckout(
+  options: { launcher?: boolean; windows?: boolean; settings?: Record<string, string | number | boolean> } = {},
+) {
   const files = new Map<string, string>([
     [`${ROOT}/.dev/environment.json`, JSON.stringify({ root: ROOT, url: URL, ports: { site: 14005 }, log: `${ROOT}/.dev/dev.log` })],
   ]);
@@ -24,6 +32,10 @@ function fakeCheckout(options: { launcher?: boolean; settings?: Record<string, s
   const terminals = new Map<string, FakeTerminal>();
   const created: unknown[] = [];
   const closed: string[] = [];
+  // BB's desktop window runs beside the server, not on the checkout's host.
+  const window = { instanceId: "win_1", generation: "gen_1", label: "BB window 1", hostId: "host_server" };
+  const browserTabs: FakeBrowserTab[] = [];
+  const browserCalls: Array<{ method: string; input: Record<string, unknown> }> = [];
   const session = (id: string) => {
     const terminal = terminals.get(id);
     if (!terminal) throw new Error(`No terminal ${id}`);
@@ -47,6 +59,31 @@ function fakeCheckout(options: { launcher?: boolean; settings?: Record<string, s
           const content = files.get(path);
           if (content === undefined) throw new Error(`ENOENT ${path}`);
           return { content, contentEncoding: "utf8" };
+        },
+      },
+      experimental_desktopBrowsers: {
+        listInstances: async ({ hostId }: { hostId: string }) => ({
+          instances: options.windows !== false && hostId === window.hostId ? [window] : [],
+        }),
+        listTabs: async ({ threadId }: { threadId: string }) => ({
+          tabs: browserTabs
+            .filter((tab) => tab.threadId === threadId)
+            .map((tab) => ({ ...tab, title: "", control: null, presentation: "reveal" })),
+        }),
+        createTab: async (input: { threadId: string; url: string }) => {
+          browserCalls.push({ method: "createTab", input });
+          const tab = { tabId: `tab_${browserTabs.length + 1}`, threadId: input.threadId, url: input.url };
+          browserTabs.push(tab);
+          return { tab: { ...tab, title: "", control: null, presentation: "reveal" } };
+        },
+        revealTab: async (input: { tabId: string }) => {
+          browserCalls.push({ method: "revealTab", input });
+          return { ok: true };
+        },
+        closeTab: async (input: { tabId: string }) => {
+          browserCalls.push({ method: "closeTab", input });
+          browserTabs.splice(browserTabs.findIndex((tab) => tab.tabId === input.tabId), 1);
+          return { ok: true };
         },
       },
       terminals: {
@@ -84,7 +121,7 @@ function fakeCheckout(options: { launcher?: boolean; settings?: Record<string, s
       },
     } as never,
   });
-  return { bb, harness, terminals, created, closed };
+  return { bb, harness, terminals, created, closed, browserTabs, browserCalls };
 }
 
 async function statusOf(harness: ReturnType<typeof fakeCheckout>["harness"], threadId: string) {
@@ -138,6 +175,72 @@ test("Run dev starts a thread terminal and reports ready once the banner prints"
   assert.deepEqual(await harness.behavior.callRpc("start", { threadId: "thr_a" }), { terminalId });
   assert.equal(created.length, 1);
   await harness.lifecycle.dispose();
+});
+
+async function startReady(fake: ReturnType<typeof fakeCheckout>, threadId = "thr_a") {
+  const { terminalId } = (await fake.harness.behavior.callRpc("start", { threadId })) as {
+    terminalId: string;
+  };
+  fake.terminals.get(terminalId)!.output += `  Bogi is ready\n\n  Open: ${URL}\n`;
+  const status = await statusOf(fake.harness, threadId);
+  // Auto-open runs in the background of the status read.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  return status;
+}
+
+test("a run started here opens once in the thread's BB browser when it becomes ready", async () => {
+  const fake = fakeCheckout();
+  await plugin(fake.bb);
+  assert.equal((await startReady(fake)).state, "ready");
+  assert.deepEqual(fake.browserCalls, [{
+    method: "createTab",
+    input: {
+      hostId: "host_server",
+      instanceId: "win_1",
+      generation: "gen_1",
+      threadId: "thr_a",
+      url: URL,
+      presentation: "reveal",
+    },
+  }]);
+
+  await statusOf(fake.harness, "thr_a");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(fake.browserCalls.length, 1);
+
+  // Open app reveals the existing tab instead of stacking another.
+  assert.deepEqual(await fake.harness.behavior.callRpc("open", { threadId: "thr_a" }), { opened: true });
+  assert.deepEqual(fake.browserCalls.map((call) => call.method), ["createTab", "revealTab"]);
+  await fake.harness.lifecycle.dispose();
+});
+
+test("a restarted server replaces its stale tab at the same address", async () => {
+  const fake = fakeCheckout();
+  await plugin(fake.bb);
+  await startReady(fake);
+  fake.browserTabs[0]!.url = `${URL}/dashboard`;
+  fake.browserCalls.length = 0;
+
+  const { terminalId } = (await fake.harness.behavior.callRpc("restart", { threadId: "thr_a" })) as {
+    terminalId: string;
+  };
+  fake.terminals.get(terminalId)!.output += "  Bogi is ready\n";
+  await statusOf(fake.harness, "thr_a");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(fake.browserCalls.map((call) => [call.method, call.input.url ?? call.input.tabId]), [
+    ["createTab", `${URL}/dashboard`],
+    ["closeTab", "tab_1"],
+  ]);
+  await fake.harness.lifecycle.dispose();
+});
+
+test("auto-open can be turned off, and Open app falls back without a BB window", async () => {
+  const fake = fakeCheckout({ windows: false, settings: { openBrowserWhenReady: false } });
+  await plugin(fake.bb);
+  await startReady(fake);
+  assert.deepEqual(fake.browserCalls, []);
+  assert.deepEqual(await fake.harness.behavior.callRpc("open", { threadId: "thr_a" }), { opened: false });
+  await fake.harness.lifecycle.dispose();
 });
 
 test("Stop dev interrupts the launcher so it can clean up its own processes", async () => {

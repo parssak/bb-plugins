@@ -34,6 +34,8 @@ interface RunRecord {
   terminalId: string;
   threadId: string;
   startedAt: number;
+  /** The app was opened in BB's browser once this run became ready. */
+  browserOpened?: boolean;
 }
 
 interface Checkout {
@@ -74,6 +76,12 @@ export default async function plugin(bb: BbPluginApi) {
       description: "Reveal the dev.sh terminal in the side panel after Run dev.",
       default: true,
     },
+    openBrowserWhenReady: {
+      type: "boolean",
+      label: "Open the app when ready",
+      description: "Show the worktree in BB's side browser once a run started here is ready.",
+      default: true,
+    },
   });
 
   const lifetime = new AbortController();
@@ -86,6 +94,7 @@ export default async function plugin(bb: BbPluginApi) {
   // Threads whose status was read, so a change to a shared checkout refreshes all of them.
   const watchers = new Map<string, Set<string>>();
   const lastServed = new Map<string, string>();
+  const autoOpening = new Set<string>();
   let primaryHostId: Promise<string | null> | null = null;
 
   const runKey = (environmentId: string) => `run:${environmentId}`;
@@ -119,12 +128,16 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
-  async function localHost(hostId: string): Promise<boolean> {
+  function primaryHost(): Promise<string | null> {
     primaryHostId ??= bb.sdk.system.config().then(
       (config) => config.primaryHostId,
       () => null,
     );
-    return (await primaryHostId) === hostId;
+    return primaryHostId;
+  }
+
+  async function localHost(hostId: string): Promise<boolean> {
+    return (await primaryHost()) === hostId;
   }
 
   async function checkoutFor(threadId: string, fresh = false): Promise<Checkout | null> {
@@ -236,6 +249,7 @@ export default async function plugin(bb: BbPluginApi) {
     const running = state === "starting" || state === "ready" || state === "stopping";
     // An old exited tab says nothing about a server started outside BB.
     const ownRun = record && !external ? record : null;
+    if (state === "ready" && ownRun && url) void openWhenReady(checkout, ownRun, url);
     return {
       state,
       environmentId: checkout.environmentId,
@@ -245,6 +259,67 @@ export default async function plugin(bb: BbPluginApi) {
       external,
       exitCode: ownRun ? (terminal?.exitCode ?? null) : null,
     };
+  }
+
+  async function desktopWindow(hostId: string) {
+    const browsers = bb.sdk.experimental_desktopBrowsers;
+    // A remote checkout's app still opens in the desktop beside the server.
+    const primary = await primaryHost();
+    for (const candidate of new Set([hostId, ...(primary ? [primary] : [])])) {
+      try {
+        const { instances } = await browsers.listInstances({ hostId: candidate });
+        if (instances[0]) return instances[0];
+      } catch {
+        // That host has no connected BB window.
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Show the app in the thread's BB browser panel. Reuses a tab already on the
+   * worktree's origin; `fresh` replaces it at the same address instead, so a
+   * restarted server is not left on a stale error page.
+   */
+  async function openInBrowser(threadId: string, url: string, hostId: string, fresh: boolean) {
+    const window = await desktopWindow(hostId);
+    if (window === null) return false;
+    const browsers = bb.sdk.experimental_desktopBrowsers;
+    const scope = {
+      hostId: window.hostId,
+      instanceId: window.instanceId,
+      generation: window.generation,
+      threadId,
+    };
+    const origin = new URL(url).origin;
+    const { tabs } = await browsers.listTabs(scope);
+    const existing = tabs.filter((tab) => originOf(tab.url) === origin);
+    if (existing[0] && !fresh) {
+      await browsers.revealTab({ ...scope, tabId: existing[0].tabId });
+      return true;
+    }
+    await browsers.createTab({ ...scope, url: existing[0]?.url ?? url, presentation: "reveal" });
+    for (const tab of existing) {
+      await browsers.closeTab({ ...scope, tabId: tab.tabId }).catch(() => undefined);
+    }
+    return true;
+  }
+
+  async function openWhenReady(checkout: Checkout, record: RunRecord, url: string) {
+    if (record.browserOpened || autoOpening.has(record.terminalId)) return;
+    autoOpening.add(record.terminalId);
+    try {
+      const key = runKey(checkout.environmentId);
+      const current = await bb.storage.kv.get<RunRecord>(key);
+      if (current?.terminalId !== record.terminalId || current.browserOpened) return;
+      await bb.storage.kv.set(key, { ...current, browserOpened: true });
+      if (!(await settings.get()).openBrowserWhenReady) return;
+      await openInBrowser(record.threadId, url, checkout.hostId, true);
+    } catch (error) {
+      bb.log.warn(`opening ${url} in BB's browser failed: ${String(error)}`);
+    } finally {
+      autoOpening.delete(record.terminalId);
+    }
   }
 
   async function waitForExit(terminalId: string, timeoutMs: number): Promise<boolean> {
@@ -371,6 +446,12 @@ export default async function plugin(bb: BbPluginApi) {
       const pending = await withLock(checkout.environmentId, () => beginStop(threadId, checkout));
       return { stopped: pending !== null };
     },
+    open: async ({ threadId }) => {
+      const checkout = await requireCheckout(threadId);
+      const status = await statusFor(threadId);
+      if (status.url === null) throw new Error("The dev server has not reported a URL yet.");
+      return { opened: await openInBrowser(threadId, status.url, checkout.hostId, false) };
+    },
     restart: async ({ threadId }) => {
       const checkout = await requireCheckout(threadId);
       const result = await withLock(checkout.environmentId, async () => {
@@ -409,6 +490,14 @@ export default async function plugin(bb: BbPluginApi) {
     }
     lastServed.delete(threadId);
   });
+}
+
+function originOf(url: string): string | null {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
 }
 
 function portFromUrl(url: string): number | null {

@@ -105,10 +105,19 @@ async function stop({ threadId, data }: ActionContext) {
   }
 }
 
-function openApp(context: ActionContext) {
-  const { url } = context.status;
-  if (url && context.navigate.openUrl(url)) return;
-  toast.error(url ? `BB could not open ${url}.` : "This dev server has not reported a URL yet.");
+/** Open the app in the thread's BB browser panel, or wherever BB opens links. */
+async function openApp({ threadId, status, data, navigate }: ActionContext) {
+  const { url } = status;
+  if (!url) {
+    toast.error("This dev server has not reported a URL yet.");
+    return;
+  }
+  try {
+    if ((await data.rpc.call("open", { threadId })).opened) return;
+  } catch {
+    // Fall back to BB's link handling below.
+  }
+  if (!navigate.openUrl(url)) toast.error(`BB could not open ${url}.`);
 }
 
 async function copyUrl({ status }: ActionContext) {

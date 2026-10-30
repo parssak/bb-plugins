@@ -6,6 +6,7 @@ click.
 - A **Run dev** button in the thread header of any checkout with `./dev.sh`.
 - Live status: **Starting dev…** while services boot, then **Open app** with a
   green dot once the worktree is ready.
+- The app opens in BB's browser beside the chat as soon as it is ready.
 - The launcher's logs in BB's terminal panel, plus Copy URL, Restart, and Stop
   in the button's menu.
 
