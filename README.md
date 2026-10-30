@@ -12,6 +12,8 @@ Independent plugins for BB 0.46 and Plugin SDK 0.6.37 or later.
 
 Each directory is an independent package with its own backend, frontend, storage, tests, and build. Journal, Chat tools, and Usage insights work with Threadflow disabled. Threadflow reads BB's live sidebar cache; only its wait dependencies and scheduled-send metadata come from its backend.
 
+Personal BB appearance settings are tracked in [themes](themes/README.md), including instant sidebar toggles and hidden navigation rail.
+
 Build and install a package:
 
 ```sh

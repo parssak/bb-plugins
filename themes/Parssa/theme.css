@@ -1,0 +1,72 @@
+:root, .light {
+  --canvas: #ffffff;
+  --ink: #171717;
+
+  --primary: #006aff;
+  --primary-foreground: #ffffff;
+
+  --muted-foreground: color-mix(in oklch, var(--ink) 70%, var(--canvas));
+  --subtle-foreground: color-mix(in oklch, var(--ink) 58%, var(--canvas));
+  --readback-foreground: color-mix(in oklch, var(--ink) 64%, var(--canvas));
+
+  --surface-scrim: #ffffff;
+  --destructive: #eb001d;
+  --destructive-foreground: #ffffff;
+  --destructive-text: #c90019;
+  --success: #28a948;
+  --diff-added: #28a948;
+  --diff-removed: #eb001d;
+  --pr-merged: #a100f8;
+  --file-accent: #006aff;
+
+  --font-sans: "Open Runde", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
+}
+
+.dark {
+  --canvas: #0a0a0a;
+  --ink: #ededed;
+
+  --primary: #006efe;
+  --primary-foreground: #ffffff;
+
+  --surface-scrim: #0a0a0a;
+  --destructive: #f13342;
+  --destructive-foreground: #ffffff;
+  --destructive-text: #ff7d86;
+  --success: #00ad3a;
+  --diff-added: #00ad3a;
+  --diff-removed: #f13342;
+  --pr-merged: #9540d5;
+  --file-accent: #006efe;
+
+  --font-sans: Geist, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Open and close BB sidebars instantly. */
+[data-sidebar="gap"],
+[data-sidebar="panel"],
+[data-sidebar="collapsible-body"],
+[data-sidebar="inset"],
+[data-sidebar="inset"]::before,
+[data-sidebar="inset"]::after,
+[data-sidebar-mobile-backdrop],
+[data-testid="secondary-panel-shelf"],
+[data-testid="app-desktop-sidebar-trigger"],
+[data-testid="app-sidebar-trigger-overlay"],
+[class~="duration-[var(--panel-collapse-duration,220ms)]"] {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Keep the page title stationary during sidebar changes. */
+[data-testid="app-page-header-content-row"] {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* Use BB's rail-free layout without the navigation shortcut list. */
+[data-sidebar-navigation-placement="list"] {
+  display: none !important;
+}
