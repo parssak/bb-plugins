@@ -23,7 +23,13 @@ interface FakeBrowserTab {
 }
 
 function fakeCheckout(
-  options: { launcher?: boolean; windows?: boolean; settings?: Record<string, string | number | boolean> } = {},
+  options: {
+    launcher?: boolean;
+    windows?: boolean;
+    settings?: Record<string, string | number | boolean>;
+    /** Shapes each new launcher terminal, e.g. to make it ready at once. */
+    onCreate?: (terminal: FakeTerminal) => void;
+  } = {},
 ) {
   const files = new Map<string, string>([
     [`${ROOT}/.dev/environment.json`, JSON.stringify({ root: ROOT, url: URL, ports: { site: 14005 }, log: `${ROOT}/.dev/dev.log` })],
@@ -90,7 +96,9 @@ function fakeCheckout(
         create: async (args: unknown) => {
           created.push(args);
           const id = `term_${created.length}`;
-          terminals.set(id, { status: "running", exitCode: null, closeReason: null, output: "", inputs: [] });
+          const terminal: FakeTerminal = { status: "running", exitCode: null, closeReason: null, output: "", inputs: [] };
+          options.onCreate?.(terminal);
+          terminals.set(id, terminal);
           return session(id);
         },
         get: async ({ terminalId }: { terminalId: string }) => session(terminalId),
@@ -288,4 +296,46 @@ test("rejects thread ids that are not BB thread ids", async () => {
   await plugin(bb);
   await assert.rejects(harness.behavior.callRpc("start", { threadId: "../etc" }));
   await harness.lifecycle.dispose();
+});
+
+test("bb dev-server start --wait starts the calling thread's server and prints its URL", async () => {
+  const fake = fakeCheckout({
+    onCreate: (terminal) => {
+      terminal.output = "  Bogi is ready\n";
+    },
+  });
+  await plugin(fake.bb);
+  const ctx = { threadId: "thr_a" };
+  const started = await fake.harness.behavior.runCli(["start", "--wait"], ctx);
+  assert.equal(started.exitCode, 0, started.stderr);
+  assert.match(started.stdout ?? "", new RegExp(`^state: ready\nurl: ${URL}\nlogs: bb terminal output term_1`));
+  assert.deepEqual(await fake.harness.behavior.runCli(["url"], ctx), { exitCode: 0, stdout: URL, stderr: "" });
+
+  // Starting again reuses the running server.
+  const again = await fake.harness.behavior.runCli(["start", "--json"], { threadId: "thr_b" });
+  assert.equal(JSON.parse(again.stdout ?? "").runTerminalId, "term_1");
+  assert.equal(fake.created.length, 1);
+  await fake.harness.lifecycle.dispose();
+});
+
+test("bb dev-server explains a failed start and a server that is not ready", async () => {
+  const fake = fakeCheckout({
+    onCreate: (terminal) => {
+      Object.assign(terminal, { status: "exited", exitCode: 1, closeReason: "process-exit" });
+    },
+  });
+  await plugin(fake.bb);
+  const notReady = await fake.harness.behavior.runCli(["url", "--thread", "thr_a"]);
+  assert.equal(notReady.exitCode, 1);
+  assert.match(notReady.stderr ?? "", /stopped, not ready/);
+
+  const failed = await fake.harness.behavior.runCli(["start", "--wait", "--thread", "thr_a"]);
+  assert.equal(failed.exitCode, 1);
+  assert.match(failed.stderr ?? "", /exited with code 1 before it was ready/);
+  assert.match(failed.stderr ?? "", /bb terminal output term_1/);
+
+  const noThread = await fake.harness.behavior.runCli(["status"]);
+  assert.equal(noThread.exitCode, 1);
+  assert.match(noThread.stderr ?? "", /--thread/);
+  await fake.harness.lifecycle.dispose();
 });

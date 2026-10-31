@@ -12,13 +12,15 @@
   },
   "bb": {
     "name": "Dev Server",
-    "description": "Run a checkout's ./dev.sh from the thread header and open its worktree URL.",
+    "description": "Run a checkout's ./dev.sh from the thread header or `bb dev-server`, and open its worktree URL in BB's browser.",
     "branding": {
       "icon": "./assets/icon.svg"
     },
     "server": "./server.ts",
     "app": "./app.tsx",
-    "skills": []
+    "skills": [
+      "skills"
+    ]
   },
   "dependencies": {
     "zod": "^4.6.5"

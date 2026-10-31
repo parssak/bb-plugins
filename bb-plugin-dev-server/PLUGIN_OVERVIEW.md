@@ -10,6 +10,12 @@ click.
 - The launcher's logs in BB's terminal panel, plus Copy URL, Restart, and Stop
   in the button's menu.
 
+## For agents
+
+Agents run the same server with `bb dev-server start --wait`, get its URL with
+`bb dev-server url`, and the bundled skill shows them how to test it in BB's
+browser with Browser Automation.
+
 ## How it works
 
 Each run is a BB terminal scoped to the thread that started it. The worktree's

@@ -38,6 +38,22 @@ Its menu adds Show logs, Copy URL, Restart dev, and Stop dev.
   pushed to the header. Port checks run only for checkouts on the BB server's
   own machine.
 
+## For agents
+
+`bb dev-server` runs the same server as the header button, for the calling
+thread (or `--thread <id>`):
+
+```sh
+bb dev-server start --wait   # start unless running, print the URL once ready
+bb dev-server url            # the URL, or exit 1 if it is not ready
+bb dev-server status         # state, URL, and where the logs are
+bb dev-server stop
+```
+
+The bundled `dev-server` skill tells agents to start the server this way and
+then test it with BB's Browser Automation plugin in a desktop session, which
+uses the BB browser's signed-in cookies and works while the tab is hidden.
+
 ## Settings
 
 - **Extra ./dev.sh arguments**: appended to every run, for example

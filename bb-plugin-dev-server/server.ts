@@ -6,6 +6,7 @@
 import { connect } from "node:net";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { createDevServerCli } from "./cli.ts";
 import {
   rpcContract,
   threadIdSchema,
@@ -428,6 +429,19 @@ export default async function plugin(bb: BbPluginApi) {
     return status;
   }
 
+  async function startRun(threadId: string) {
+    const checkout = await requireCheckout(threadId);
+    const result = await withLock(checkout.environmentId, () => launch(threadId, checkout));
+    invalidateEnvironment(checkout.environmentId);
+    return result;
+  }
+
+  async function stopRun(threadId: string) {
+    const checkout = await requireCheckout(threadId);
+    const pending = await withLock(checkout.environmentId, () => beginStop(threadId, checkout));
+    return pending !== null;
+  }
+
   bb.rpc.register(rpcContract, {
     status: async ({ keys }) => {
       const entries = await Promise.all(
@@ -435,17 +449,8 @@ export default async function plugin(bb: BbPluginApi) {
       );
       return Object.fromEntries(entries);
     },
-    start: async ({ threadId }) => {
-      const checkout = await requireCheckout(threadId);
-      const result = await withLock(checkout.environmentId, () => launch(threadId, checkout));
-      invalidateEnvironment(checkout.environmentId);
-      return result;
-    },
-    stop: async ({ threadId }) => {
-      const checkout = await requireCheckout(threadId);
-      const pending = await withLock(checkout.environmentId, () => beginStop(threadId, checkout));
-      return { stopped: pending !== null };
-    },
+    start: ({ threadId }) => startRun(threadId),
+    stop: async ({ threadId }) => ({ stopped: await stopRun(threadId) }),
     open: async ({ threadId }) => {
       const checkout = await requireCheckout(threadId);
       const status = await statusFor(threadId);
@@ -462,6 +467,21 @@ export default async function plugin(bb: BbPluginApi) {
       return result;
     },
   });
+
+  bb.cli.register(
+    createDevServerCli({
+      status: statusFor,
+      runTerminal: async (threadId) => {
+        const checkout = await checkoutFor(threadId);
+        return checkout ? ((await currentRun(checkout)).record?.terminalId ?? null) : null;
+      },
+      start: async (threadId) => {
+        await startRun(threadId);
+      },
+      stop: stopRun,
+      sleep: (ms, signal) => sleep(ms, signal ?? lifetime.signal),
+    }),
+  );
 
   // Poll only threads whose header is on screen, and push a refresh on change.
   bb.rpc.experimental_whileWatched("status", async (read, signal) => {
